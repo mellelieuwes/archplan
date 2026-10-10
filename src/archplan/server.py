@@ -12,7 +12,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
 
-from .project import Project, ProjectError, etag, read_json, write_atomic, write_json
+from .project import Project, ProjectError, UntrustedExport, etag, read_json, write_atomic, write_json
 from .store import Store, wait
 
 LONG_POLL = 25.0  # seconds the editor's request for changes may wait
@@ -72,7 +72,25 @@ def make_handler(p: Project, store: Store):
             o = self.headers.get("Origin")
             return o is None or o == f"http://{self.headers.get('Host')}"
 
+        def local_host(self) -> bool:
+            """Answer only requests addressed to this machine by name or loopback
+            address. A web page that rebinds its own domain to 127.0.0.1 then
+            cannot read or write the project (DNS rebinding)."""
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+            return host in ("127.0.0.1", "localhost", "::1")
+
+        def refuse(self) -> bool:
+            if not self.local_host():
+                self.send_json({"error": "request for a non-local host refused"}, HTTPStatus.FORBIDDEN)
+                return True
+            if self.command != "GET" and not self.local_origin():
+                self.send_json({"error": "cross-origin request refused"}, HTTPStatus.FORBIDDEN)
+                return True
+            return False
+
         def do_GET(self):
+            if self.refuse():
+                return
             path, _, query = self.path.partition("?")
             params = dict(x.split("=", 1) for x in query.split("&") if "=" in x)
             if path == "/api/info":
@@ -99,8 +117,8 @@ def make_handler(p: Project, store: Store):
             return super().do_GET()
 
         def do_POST(self):
-            if not self.local_origin():
-                return self.send_json({"error": "cross-origin request refused"}, HTTPStatus.FORBIDDEN)
+            if self.refuse():
+                return
             parts = self.path.strip("/").split("/")
             try:
                 b = self.body() or {}
@@ -117,9 +135,11 @@ def make_handler(p: Project, store: Store):
                     if not export_lock.acquire(blocking=False):
                         return self.send_json({"error": "an export is already running"}, HTTPStatus.CONFLICT)
                     try:
-                        return self.send_json({"ok": True, "counts": p.export(), **changes(p, store)})
+                        return self.send_json({"ok": True, "counts": p.export(require_trust=True), **changes(p, store)})
                     finally:
                         export_lock.release()
+            except UntrustedExport as e:
+                return self.send_json({"error": str(e)}, HTTPStatus.FORBIDDEN)
             except ProjectError as e:
                 return self.send_json({"error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR)
             except (KeyError, ValueError) as e:
@@ -127,8 +147,8 @@ def make_handler(p: Project, store: Store):
             self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
         def do_PUT(self):
-            if not self.local_origin():
-                return self.send_json({"error": "cross-origin request refused"}, HTTPStatus.FORBIDDEN)
+            if self.refuse():
+                return
             b = self.body() or {}
             if self.path == "/api/target":
                 rev = p.save_target(b["target"], "editor", b.get("base_etag"))

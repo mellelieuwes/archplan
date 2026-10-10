@@ -1,5 +1,7 @@
 import io
 import json
+import os
+import unittest.mock
 import subprocess
 import sys
 import tempfile
@@ -63,10 +65,13 @@ SAMPLE = {
 class TempProject(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name) / "repo"
         write(self.root, SAMPLE)
+        self.env = unittest.mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(Path(self.tmp.name) / "config")})
+        self.env.start()
 
     def tearDown(self):
+        self.env.stop()
         self.tmp.cleanup()
 
 
@@ -108,6 +113,56 @@ class ProjectTest(TempProject):
         self.assertEqual(rev, 1)
         self.assertTrue(p.base_path.exists())
         self.assertEqual(p.state()["target_by"], "editor")
+
+
+class TrustTest(TempProject):
+    def test_export_needs_approval(self):
+        p = project.init(self.root)
+        self.assertTrue(p.trusted())  # init approves the command it writes
+        cfg = json.loads((p.dir / "config.json").read_text())
+        cfg["export"] = "echo pwned > owned.txt"
+        (p.dir / "config.json").write_text(json.dumps(cfg))
+        p = project.Project(self.root)
+        self.assertFalse(p.trusted())
+        with self.assertRaises(project.UntrustedExport):
+            p.export(require_trust=True)
+        self.assertFalse((self.root / "owned.txt").exists())
+        with self.assertRaises(project.UntrustedExport):
+            Agent(p).refresh_model()
+
+
+class ServerTest(TempProject):
+    def test_host_and_origin_checks(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        from http.server import ThreadingHTTPServer
+        from archplan.server import make_handler
+        p = project.init(self.root)
+        cfg = json.loads((p.dir / "config.json").read_text())
+        cfg["export"] = "echo pwned > owned.txt"
+        (p.dir / "config.json").write_text(json.dumps(cfg))
+        p = project.Project(self.root)
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(p, Store(p.dir)))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{srv.server_address[1]}"
+
+        def code(path, method="GET", headers=None, body=None):
+            req = urllib.request.Request(url + path, method=method, headers=headers or {},
+                                         data=json.dumps(body).encode() if body is not None else None)
+            try:
+                return urllib.request.urlopen(req, timeout=5).status
+            except urllib.error.HTTPError as e:
+                return e.code
+        try:
+            self.assertEqual(code("/api/info"), 200)
+            self.assertEqual(code("/api/info", headers={"Host": "evil.example:80"}), 403)
+            self.assertEqual(code("/api/threads", "POST", {"Origin": "http://evil.example"}, {"anchor": "a", "text": "b"}), 403)
+            self.assertEqual(code("/api/threads", "POST", {"Content-Type": "application/json"}, {"anchor": "a", "text": "b"}), 200)
+            self.assertEqual(code("/api/export", "POST", {}, {}), 403)  # an unapproved command is refused
+            self.assertFalse((self.root / "owned.txt").exists())
+        finally:
+            srv.shutdown()
 
 
 class StoreTest(unittest.TestCase):

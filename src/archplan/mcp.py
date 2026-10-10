@@ -108,6 +108,7 @@ class Agent:
                 "editor": srv["url"] if srv else "not running (run `archplan up`)",
                 "model": counts(model) if model else "none yet (call refresh_model)",
                 "target": {"edited": bool(target), "violations": len(violations(target)) if target else 0},
+                "export_approved": p.trusted(),
                 "intent": p.state().get("intent", ""),
                 "plan_tasks": len(plan.get("tasks", [])),
                 "threads": {"waiting_on_agent": [self.summary(t) for t in ths if who_next(t) == "agent"],
@@ -146,7 +147,7 @@ class Agent:
         return edit_target(self.p, ops)
 
     def refresh_model(self):
-        return {"counts": self.p.export(), "note": "The editor reloads the as-is model and rebases the target."}
+        return {"counts": self.p.export(require_trust=True), "note": "The editor reloads the as-is model and rebases the target."}
 
     def wait_for_comments(self, timeout_seconds=120):
         v = self.store.version()

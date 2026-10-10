@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <title>archplan · demo</title>
-<script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
-<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
-<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
-<script src="https://unpkg.com/marked@12.0.2/marked.min.js"></script>
+<script src="vendor/cytoscape.min.js"></script>
+<script src="vendor/dagre.min.js"></script>
+<script src="vendor/cytoscape-dagre.js"></script>
+<script src="vendor/marked.min.js"></script>
 <style>
 :root{--bg:#f8fafc;--panel:#fff;--line:#e2e8f0;--ink:#0f172a;--mute:#64748b;--add:#16a34a;--rem:#dc2626;--chg:#d97706;--mov:#7c3aed;--acc:#2563eb}
 *{box-sizing:border-box}
@@ -325,6 +325,14 @@ let intent = SAMPLE_INTENT;
 // agent reads and answers them over MCP; otherwise they stay in this page.
 // pollKey names the server state the page has seen: threads version, as-is
 // model and target revision. known.* track the last two.
+// Markdown from threads and plans can come from a cloned repository: render
+// raw HTML as text and keep only http(s), mailto and relative links.
+const safeHref = h => /^(https?:|mailto:|#|\/|\.)/i.test(String(h || '').trim()) ? h : '#';
+marked.use({renderer: {
+  html(h) { return esc(typeof h === 'string' ? h : h.text); },
+  link(href, title, text) { if (typeof href === 'object') ({href, title, text} = href); return `<a href="${esc(safeHref(href))}"${title ? ` title="${esc(title)}"` : ''} rel="noopener noreferrer" target="_blank">${text}</a>`; },
+  image(href, title, text) { if (typeof href === 'object') ({href, title, text} = href); return esc(text || ''); },
+}});
 let threads = [], threadsVer = -1, collab = null, composeKey = null, pollKey = '-1';
 const known = {modelEtag: null, targetRev: 0};
 let lastPub = '';

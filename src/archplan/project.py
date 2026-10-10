@@ -15,6 +15,7 @@ editor) and an agent (over MCP):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
@@ -37,6 +38,19 @@ server.log
 
 class ProjectError(Exception):
     pass
+
+
+class UntrustedExport(ProjectError):
+    pass
+
+
+def trust_path() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "archplan" / "trusted.json"
+
+
+def command_hash(root: Path, cmd: str) -> str:
+    return hashlib.sha256(f"{root}\0{cmd}".encode()).hexdigest()
 
 
 def find_root(start: Path | None = None) -> Path | None:
@@ -159,12 +173,39 @@ class Project:
     def export_command(self) -> str | None:
         return self.config.get("export")
 
-    def export(self, timeout: float = 600) -> dict:
+    # The export command comes from config.json, which a cloned repository
+    # supplies. It runs in a shell, so the agent (refresh_model) and the editor
+    # (From code) run it only after a person approved this exact command for this
+    # directory, outside the repository: `archplan init`, `archplan trust`, or
+    # answering yes in `archplan export`.
+
+    def trusted(self) -> bool:
+        cmd = self.export_command()
+        return bool(cmd) and command_hash(self.root, cmd) in (read_json(trust_path(), {}) or {}).get("commands", [])
+
+    def trust(self) -> None:
+        cmd = self.export_command()
+        if not cmd:
+            raise ProjectError("no export command to trust")
+        tp = trust_path()
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        data = read_json(tp, {}) or {}
+        data.setdefault("commands", [])
+        h = command_hash(self.root, cmd)
+        if h not in data["commands"]:
+            data["commands"].append(h)
+            write_json(tp, data)
+
+    def export(self, timeout: float = 600, require_trust: bool = False) -> dict:
         """Run the configured exporter in the project root. The command writes the
         as-is model to the configured model path (or prints it on stdout)."""
         cmd = self.export_command()
         if not cmd:
             raise ProjectError(f"no export command in {self.dir / 'config.json'}")
+        if require_trust and not self.trusted():
+            raise UntrustedExport(
+                f"the export command in .archplan/config.json is not approved on this machine: {cmd!r}. "
+                "A person must run `archplan trust` (or `archplan export`) in a terminal once.")
         if cmd.startswith("archplan "):
             # Our own exporter: run it with this interpreter, so it works when
             # archplan is not on the PATH (as in a plugin's bin/).
@@ -208,6 +249,8 @@ def init(root: Path, export: str | None = None, port: int | None = None, force: 
     cfg = {"name": root.resolve().name, "model": f"{DIR}/model.archmodel.json",
            "export": export or detect_export(root.resolve()), "port": port or DEFAULT_PORT}
     write_json(cfg_path, cfg)
+    if cfg["export"]:
+        Project(root).trust()
     gi = d / ".gitignore"
     if not gi.exists():
         gi.write_text(GITIGNORE)

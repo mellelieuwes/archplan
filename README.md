@@ -83,6 +83,7 @@ Commit `.archplan/` to share the target, plan and threads with your team.
 |---|---|
 | `archplan init [--export CMD]` | set up `.archplan/` in this repository |
 | `archplan export` | run the export command |
+| `archplan trust` | approve a cloned repository's export command |
 | `archplan up [--open]`, `archplan down` | start or stop the editor in the background |
 | `archplan serve` | run the editor in the foreground |
 | `archplan status` | editor URL, model size, plan size, threads waiting |
@@ -110,10 +111,16 @@ that writes the model file or prints it on stdout.
 
 - The editor listens on 127.0.0.1 only and has no login. It refuses writes from
   pages on other origins.
-- `archplan export`, the editor's "From code" button and the agent's
-  `refresh_model` run the `export` command from `.archplan/config.json` in a
-  shell, like a Makefile target. Review that command when you clone a
-  repository that has one.
+- The editor answers only requests addressed to localhost, so a web page
+  cannot reach it through DNS rebinding.
+- The `export` command in `.archplan/config.json` runs in a shell, and a cloned
+  repository supplies it. The agent's `refresh_model` and the editor's "From
+  code" button run it only after you approved that exact command on this
+  machine: `archplan init` approves the command it writes; for a cloned
+  repository, run `archplan trust` (or `archplan export`, which asks).
+  Approvals live in `~/.config/archplan/trusted.json`.
+- Thread and plan text renders as Markdown without raw HTML; links only open
+  http(s) and mailto addresses. The editor's libraries ship with the package.
 
 ## Development
 
