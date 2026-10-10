@@ -127,7 +127,8 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
   <select id="glossMode" style="display:none" title="Glossary layout"><option value="map">Map</option><option value="leaks">Map: leaks only</option><option value="table">Table</option></select>
   <div class="focus" id="focusBox"><input id="focusIn" list="focusList" placeholder="Focus component…"><datalist id="focusList"></datalist><span id="chips"></span>
     <select id="seqFilter" title="Show only the components and types a sequence touches"></select>
-    <label class="mute" title="Show third-party components"><input type="checkbox" id="extChk"> external</label></div>
+    <label class="mute" title="Show third-party components"><input type="checkbox" id="extChk"> external</label>
+    <label class="mute" title="Hide leaves: boxes with one incoming line and no outgoing ones. Changed, selected and focused boxes stay."><input type="checkbox" id="leafChk"> hide leaves<span id="leafN"></span></label></div>
   <div class="seg" id="modes">
     <button data-mode="asis">As-is</button>
     <button data-mode="tobe">To-be</button>
@@ -149,7 +150,7 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
   <p>Plan an architecture change, then let an agent build it. The <b>as-is</b> model comes from the code. You edit the <b>to-be</b> model. The difference becomes a <b>plan</b>.</p>
   <h3>Start here</h3>
   <ol>
-    <li><b>Look around.</b> Pick a view: <i>Components</i> (packages and their dependencies), <i>Types</i>, <i>Sequence</i> (call flows) or <i>Glossary</i> (the terms each component owns). Type in <i>Focus component…</i> to zoom in on one part. Double-click a box to focus on it.</li>
+    <li><b>Look around.</b> Pick a view: <i>Components</i> (packages and their dependencies), <i>Types</i>, <i>Sequence</i> (call flows) or <i>Glossary</i> (the terms each component owns). Type in <i>Focus component…</i> to zoom in on one part. Double-click a box to focus on it. <i>Hide leaves</i> hides boxes with one incoming line and no outgoing ones, to show the connections that matter.</li>
     <li><b>Say what you want.</b> Open the <i>Plan</i> tab and write the intent: what should this change achieve?</li>
     <li><b>Edit the to-be model.</b> Select an item and change it in the <i>Inspect</i> tab: move a type, rename, forbid a dependency. Drag the blue dot from one box to another to connect them; select a line and press Delete to remove it. <i>Diff</i> shows what you changed.</li>
     <li><b>Comment.</b> Select an item and write in <i>Comments</i>. Shift-click several items to comment on them together, for example an import cycle.</li>
@@ -309,6 +310,7 @@ let BASE = SAMPLE;
 let asIs = clone(SAMPLE);
 let toBe = clone(SAMPLE);
 let focus = new Set(), showExternal = false, seqFilter = '', glossMode = 'map';
+let hideLeaves = localStorage.getItem('archplan.hideLeaves') === '1';
 let undoStack = [];
 let view = 'types', mode = 'diff', tab = 'inspect', curSeq = 'PlaceOrder';
 let sel = null;
@@ -1837,10 +1839,33 @@ function renderCy(forceLayout) {
   hideHandle(); handleNode = null;
   cy.elements().remove();
   cy.add(view === 'types' ? typeEls() : view === 'glossary' ? glossEls() : compEls());
+  dropLeaves();
   placeNodes(forceLayout);
   applySel();
   const vp = viewports[view];
   if (vp) { cy.zoom(vp.zoom); cy.pan(vp.pan); } else cy.fit(undefined, 40);
+}
+// A leaf has one incoming line and no outgoing ones. Leaves are rarely an
+// architecture problem, so hiding them leaves the connections that matter.
+function dropLeaves() {
+  let n = 0;
+  if (hideLeaves && view !== 'glossary') {
+    const st = x => (x.data('sk') === 'type' ? D?.type : D?.comp)?.[x.data('sid')];
+    const keep = x => st(x) || focus.has(x.data('sid')) || (sel && sel.id === x.data('sid')) || multi.includes(x.data('sk') + ':' + x.data('sid'));
+    // Count lines in the model, not the drawn ones: large views draw few lines.
+    const sk = view === 'types' ? 'type' : 'comp', shown = new Set(cy.nodes().filter(x => x.data('sk') === sk).map(x => x.data('sid')));
+    const ins = new Map(), outs = new Set();
+    for (const e of (view === 'types' ? viewTypeEdges() : viewCompEdges()).values()) {
+      if (e.from === e.to || !shown.has(e.from) || !shown.has(e.to)) continue;
+      outs.add(e.from);
+      ins.set(e.to, (ins.get(e.to) || new Set()).add(e.from));
+    }
+    const leaves = cy.nodes().filter(x => x.data('sk') === sk && x.isChildless() && ins.get(x.data('sid'))?.size === 1 && !outs.has(x.data('sid')) && !keep(x));
+    n = leaves.length;
+    cy.remove(leaves);
+    if (view === 'types') cy.remove(cy.nodes('.par').filter(x => x.isChildless()));
+  }
+  $('leafN').textContent = n ? ` (${n})` : '';
 }
 function applySel() {
   cy.elements().removeClass('sel msel');
@@ -2510,6 +2535,7 @@ function renderFocus() {
   $('chips').innerHTML = [...focus].map(id => `<span class="chip">${esc(cname(toBe, id))}<button data-unfocus="${esc(id)}" title="Remove">×</button></span>`).join('')
     + (focus.size ? '<button class="x" data-unfocus="*" title="Clear focus">clear</button>' : '');
   $('extChk').checked = showExternal;
+  $('leafChk').checked = hideLeaves;
   $('focusBox').style.display = view === 'seq' ? 'none' : '';
   const seqs = Object.entries({...asIs.sequences, ...toBe.sequences});
   if (seqFilter && !seqs.some(([k]) => k === seqFilter)) seqFilter = '';
@@ -2526,6 +2552,7 @@ $('chips').addEventListener('click', e => { const b = e.target.closest('[data-un
 $('glossMode').addEventListener('change', e => { glossMode = e.target.value; positions.glossary = {}; delete viewports.glossary; render(true); });
 $('seqFilter').addEventListener('change', e => { seqFilter = e.target.value; viewports = {}; positions = {components: {}, types: {}, glossary: {}}; sel = null; render(true); });
 $('extChk').addEventListener('change', e => { showExternal = e.target.checked; positions.components = {}; render(true); });
+$('leafChk').addEventListener('change', e => { hideLeaves = e.target.checked; localStorage.setItem('archplan.hideLeaves', hideLeaves ? '1' : '0'); positions.components = {}; positions.types = {}; render(true); });
 cy.on('dbltap', 'node.cmp, node.par', e => { setFocus([e.target.data('sid')], e.originalEvent?.shiftKey); });
 
 // ---------- archmodel/1 files ----------
