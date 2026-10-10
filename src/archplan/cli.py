@@ -8,7 +8,8 @@
   archplan status [--json]       editor URL, model size, threads waiting
   archplan threads [--waiting agent|human|any]
   archplan mcp                   MCP server on stdio, for an agent
-  archplan watch                 one line per human comment or plan change, for a monitor
+  archplan watch                 one line per human comment, plan change or decided suggestion
+  archplan hotspots [--since N]  components that change often, and ones that change together
   archplan hook                  Claude Code hook: tell the agent about new comments
   archplan export-python         built-in exporter for Python projects
   archplan export-elixir         exporter for Elixir/Mix projects (needs mix)
@@ -30,7 +31,7 @@ from pathlib import Path
 
 from . import __version__
 from .project import Project, ProjectError, counts, find_root, init, read_json, write_json
-from .store import Store, needs, who_next
+from .store import Store, mentions, needs, who_next
 
 
 def die(msg: str, code: int = 1):
@@ -202,7 +203,7 @@ def cmd_threads(a):
         flag = needs(t) or ""
         print(f"{t['id']}  [{t['status']}, waiting on {who_next(t)}{', ' + flag if flag else ''}]  {t['label']}")
         for m in t["messages"]:
-            print(f"    {m['author']}: {' '.join(m['text'].split())[:300]}")
+            print(f"    {m['author']}: {' '.join(mentions(m['text']).split())[:300]}")
 
 
 def cmd_mcp(a):
@@ -261,9 +262,23 @@ def cmd_hook(a):
              + (f" (editor {url})" if url else "") + ". Read them with the archplan MCP tools "
              "(read_thread, then reply in the thread); use the /archplan skill for the workflow."]
     for t in new[:10]:
-        last = " ".join(t["messages"][-1]["text"].split())
+        last = " ".join(mentions(t["messages"][-1]["text"]).split())
         lines.append(f"- {t['id']} on {t['label'][:80]}: {last[:200]}")
     print("\n".join(lines))
+
+
+def cmd_hotspots(a):
+    from . import hotspots
+    p = project(a)
+    t = time.monotonic()
+    try:
+        res = hotspots.hotspots(p, a.since, refresh=a.refresh)
+    except hotspots.NotGit as e:
+        die(f"no git history here: {e}")
+    if a.json:
+        return print(json.dumps(res, indent=2, ensure_ascii=False))
+    print(hotspots.text(res))
+    print(f"\n({time.monotonic() - t:.1f}s; cached in {p.path('hotspots.json').relative_to(p.root)})", file=sys.stderr)
 
 
 def cmd_export_python(a):
@@ -290,6 +305,9 @@ Start, in the repository root:
   archplan init      set up .archplan/ (picks an exporter for Go or Python)
   archplan export    read the code into .archplan/model.archmodel.json
   archplan up        open the editor (press ? there for help)
+
+Then, to see where the code changes most:
+  archplan hotspots  hotspots and hidden coupling from the git history
 
 With Claude Code: install the plugin, then type /archplan in the repository.
   claude plugin marketplace add vloothuis/archplan
@@ -352,6 +370,10 @@ def main(argv=None):
     s = add("watch", cmd_watch, "print human comments and plan changes as they happen")
     s.add_argument("--interval", type=float, default=2)
     add("hook", cmd_hook, "Claude Code hook (reads the hook event on stdin)")
+    s = add("hotspots", cmd_hotspots, "components that change often, and pairs that change together (from git)")
+    s.add_argument("--since", type=int, default=365, metavar="DAYS", help="days of history (default: 365)")
+    s.add_argument("--json", action="store_true", help="the full analysis as JSON")
+    s.add_argument("--refresh", action="store_true", help="ignore the cache in .archplan/hotspots.json")
     s = add("export-python", cmd_export_python, "export a Python project's as-is model")
     s.add_argument("root", nargs="?")
     s.add_argument("-o", "--output")

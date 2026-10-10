@@ -1,0 +1,90 @@
+"""Target edits the agent proposes, in .archplan/suggestions.json.
+
+The agent does not change the target directly. It saves its ops as a pending
+suggestion. The human previews it in the editor and accepts all ops, some of
+them, or none. Accepted ops are applied to the target as it is then."""
+
+from __future__ import annotations
+
+import uuid
+
+from .model import edited, save_edited, violations
+from .project import Project
+from .store import JsonStore, stamp
+
+STATUSES = ("pending", "accepted", "rejected", "partial")
+
+
+class Conflict(ValueError):
+    """A suggestion that was already decided, or an op that no longer applies."""
+
+
+class Suggestions(JsonStore):
+    name = "suggestions"
+    empty = {"suggestions": []}
+
+    def create(self, ops: list, note: str = "", thread: str | None = None) -> dict:
+        sg = {"id": "sg-" + uuid.uuid4().hex[:8], "thread": thread, "note": note or "", "ops": ops,
+              "created": stamp(), "status": "pending", "accepted": [], "decided": None}
+        self.update(lambda d: d["suggestions"].append(sg))
+        return sg
+
+    def newest(self) -> list:
+        """All suggestions, newest first."""
+        return self.read()["suggestions"][::-1]
+
+    def get(self, sid: str) -> dict:
+        return find(self.read(), sid)
+
+    def decide(self, p: Project, sid: str, indices: list | None) -> dict:
+        """Apply the chosen ops (all when indices is None) to the target and
+        record the outcome. An empty list rejects the suggestion."""
+        def fn(d):
+            sg = find(d, sid)
+            if sg["status"] != "pending":
+                raise Conflict(f"suggestion {sid} is already {sg['status']}")
+            idx = pick(sg, indices)
+            if idx:
+                m, _ = preview(p, sg, idx)
+                save_edited(p, m, "agent-suggestion")
+            sg["accepted"] = idx
+            sg["status"] = ("rejected" if not idx else "accepted" if len(idx) == len(sg["ops"]) else "partial")
+            sg["decided"] = stamp()
+            return sg
+        return self.update(fn)
+
+
+def find(d: dict, sid: str) -> dict:
+    for sg in d["suggestions"]:
+        if sg["id"] == sid:
+            return sg
+    raise KeyError(f"no suggestion {sid}")
+
+
+def pick(sg: dict, indices: list | None) -> list:
+    """Sorted, unique op indices; all ops when indices is None."""
+    n = len(sg["ops"])
+    if indices is None:
+        return list(range(n))
+    idx = sorted({int(i) for i in indices})
+    if any(i < 0 or i >= n for i in idx):
+        raise ValueError(f"op index out of range 0..{n - 1}")
+    return idx
+
+
+def preview(p: Project, sg: dict, indices: list | None = None) -> tuple:
+    """The current target with the chosen ops applied, and one line per op."""
+    ops = [sg["ops"][i] for i in pick(sg, indices)]
+    try:
+        return edited(p, ops)
+    except (KeyError, ValueError) as e:
+        raise Conflict(f"no longer applies to the target: {e}") from e
+
+
+def propose(p: Project, ops: list, note: str = "", thread: str | None = None) -> dict:
+    """Check ops against the current target, then store them as a pending
+    suggestion. Raises ValueError when an op does not apply."""
+    m, done = edited(p, ops)
+    sg = Suggestions(p.dir).create(ops, note, thread)
+    return {"suggestion": sg["id"], "status": "pending", "ops": len(ops), "would_apply": done,
+            "violations_after": len(violations(m))}

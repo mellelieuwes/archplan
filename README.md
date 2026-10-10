@@ -59,7 +59,8 @@ archplan up        # starts the editor in the background and prints its URL
 | Edit the target: move types, add components, forbid dependencies, rename terms | Sees the plan with `get_plan`, and each item with `get_item` |
 | Comment on an item, or shift-click several items and comment on the group | Is told at once: the plugin's monitor sends each comment, and a hook lists waiting threads at every prompt |
 | Read replies: orange **decision** threads need your choice (click an option); **feedback** threads only need reading | Replies with `reply`, marks a reply as a decision only when it is blocked on you |
-| Review proposed changes in the Diff view; Undo reverts them | Models a refactor with `edit_target` before building it |
+| Preview a suggestion and accept all, some or none of its changes | Proposes a refactor of the target with `edit_target`; learns the outcome from the monitor |
+| Look at hotspots and components that change together | Finds hidden coupling in the git history with `get_hotspots` and opens a thread on it |
 | Watch the plan shrink | Implements a task, then calls `refresh_model`; the editor reloads the code model and rebases your target onto it |
 
 Everything is stored in `.archplan/` in the repository:
@@ -73,9 +74,15 @@ Everything is stored in `.archplan/` in the repository:
 | `state.json` | target revision and the plan's intent |
 | `plan.md`, `plan.json` | the change plan, written by the editor |
 | `threads.json` | the comment threads |
+| `suggestions.json` | target changes the agent proposed, and what you decided |
+| `activity.json` | what the agent did last, shown in the editor |
+| `hotspots.json` | the cached git history analysis |
 
 Commit `.archplan/` to share the target, plan and threads with your team.
-`server.json` and the logs are ignored.
+`server.json`, `activity.json`, `hotspots.json` and the logs are ignored.
+
+In a message, `@[Label](anchor)` mentions a model item, for example
+`@[Orders](comp:shop.orders)`. The editor and the agent both use this form.
 
 ## Commands
 
@@ -89,10 +96,25 @@ Commit `.archplan/` to share the target, plan and threads with your team.
 | `archplan status` | editor URL, model size, plan size, threads waiting |
 | `archplan threads [--waiting agent]` | print threads |
 | `archplan mcp` | the MCP server, on stdio |
-| `archplan watch` | one line per human comment or plan change |
+| `archplan watch` | one line per human comment, plan change or decided suggestion |
+| `archplan hotspots [--since DAYS] [--json]` | components that change most, and pairs that change together without a dependency |
 | `archplan hook` | Claude Code hook: report threads that wait on the agent |
 | `archplan export-python` | the built-in Python exporter |
 | `archplan export-elixir`, `archplan trace-elixir` | the Elixir exporter and test tracer |
+
+## Hotspots
+
+`archplan hotspots` reads the last year of git history (`--since DAYS` to
+change it). A hotspot is a component that changes in many commits. Two
+components are coupled when they change in the same commits. The degree is
+the number of shared commits divided by the commits of the less active of the
+two. A coupled pair with no dependency in the model is hidden coupling: the
+code's imports do not explain why they change together.
+
+The analysis maps each changed file to a component with the model's `match`
+patterns and `path`. Commits that touch more than 50 files are skipped as bulk
+changes. Only git runs, with hooks, fsmonitor and signature checks switched
+off. The result is cached per HEAD in `.archplan/hotspots.json`.
 
 ## Exporters
 

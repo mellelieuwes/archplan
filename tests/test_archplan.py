@@ -13,10 +13,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from archplan import cli, model, project  # noqa: E402
-from archplan.mcp import Agent  # noqa: E402
+from archplan import cli, hotspots, model, project  # noqa: E402
+from archplan.mcp import Agent, record, snapshot_text  # noqa: E402
+from archplan.suggestions import Conflict, Suggestions  # noqa: E402
 from archplan.pyexport import export  # noqa: E402
-from archplan.store import Store, needs, who_next  # noqa: E402
+from archplan.store import Store, mentions, needs, who_next  # noqa: E402
 
 
 def write(root: Path, files: dict):
@@ -281,6 +282,207 @@ class McpTest(TempProject):
                                env={"PATH": "/usr/bin:/bin"})
             out = [json.loads(l) for l in r.stdout.splitlines()]
             self.assertIn("archplan init", out[1]["result"]["content"][0]["text"])
+
+
+def serve_in_thread(p):
+    """An editor server on a free port; returns (server, base url)."""
+    import threading
+    from http.server import ThreadingHTTPServer
+    from archplan.server import make_handler
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(p, Store(p.dir)))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+
+def call(url, path, method="GET", body=None):
+    """(status, JSON body) of an API request."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(url + path, method=method, headers={"Content-Type": "application/json"},
+                                 data=json.dumps(body).encode() if body is not None else None)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        with e:
+            return e.code, json.load(e)
+
+
+class HotspotTest(unittest.TestCase):
+    COMPS = {"orders": {"path": "lib/orders", "match": ["lib/orders/**"]},
+             "billing": {"path": "lib/billing", "match": ["lib/billing/**", "lib/billing.ex"]},
+             "web": {"path": "lib/web"},
+             "core": {"path": "lib", "match": ["lib/core.ex"]},
+             "ext": {"path": "deps/x", "kind": "external"}}
+
+    def test_mapping_longest_match_and_prefix_offset(self):
+        m = hotspots.Mapper(self.COMPS)
+        self.assertEqual(m("lib/orders/a.ex"), "orders")
+        self.assertEqual(m("lib/billing.ex"), "billing")
+        self.assertEqual(m("lib/web/x/y.ex"), "web")  # path, when there are no match patterns
+        self.assertEqual(m("lib/core.ex"), "core")
+        self.assertEqual(m("lib/other.ex"), "core")  # the longest component path that contains it
+        self.assertIsNone(m("deps/x/a.ex"))  # external code is not ours
+        self.assertIsNone(m("README.md"))
+        # git reports paths from the repository root; this model was exported in core/
+        files = ["core/lib/orders/a.ex", "core/lib/billing/b.ex", "core/lib/web/c.ex", "README.md", "assets/x.js"]
+        self.assertEqual(hotspots.best_prefix(files, m), "core/")
+        self.assertEqual(hotspots.best_prefix(["lib/orders/a.ex", "lib/web/b.ex"], m), "")
+
+    def test_pairs_from_git(self):
+        if subprocess.run(["git", "--version"], capture_output=True).returncode != 0:
+            self.skipTest("no git")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "repo"
+            sub = root / "core"
+            sub.mkdir(parents=True)
+            env = {**os.environ, "GIT_AUTHOR_NAME": "a", "GIT_AUTHOR_EMAIL": "a@x", "GIT_COMMITTER_NAME": "a",
+                   "GIT_COMMITTER_EMAIL": "a@x", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+            git = lambda *a: subprocess.run(["git", *a], cwd=root, env=env, check=True, capture_output=True)
+            git("init", "-q")
+            n = [0]
+
+            def commit(*paths, email="a@x"):
+                n[0] += 1
+                for f in paths:
+                    write(root, {f: f"v{n[0]}\n"})
+                git("add", "-A")
+                subprocess.run(["git", "commit", "-q", "-m", f"c{n[0]}"], cwd=root, check=True, capture_output=True,
+                               env={**env, "GIT_AUTHOR_EMAIL": email})
+            for _ in range(3):
+                commit("core/lib/orders/a.ex", "core/lib/billing/b.ex")
+            commit("core/lib/orders/a.ex", email="b@x")
+            commit("core/lib/web/w.ex", "core/lib/orders/c.ex")
+            commit(*[f"core/lib/web/f{i}.ex" for i in range(6)])  # bulk: skipped with max_files=5
+            commit("README.md")
+            write(root, {"core/.archplan/config.json": "{}"})
+            m = {"components": self.COMPS, "dependencies": [{"from": "web", "to": "orders"}]}
+            res = hotspots.analyse(hotspots.history(root, 30), m, max_files=5, min_together=1, min_degree=0.3)
+            self.assertEqual((res["commits"], res["skipped"], res["unmapped"], res["prefix"]), (6, 1, 1, "core/"))
+            self.assertEqual(res["components"]["orders"]["commits"], 5)
+            self.assertEqual(res["components"]["orders"]["authors"], 2)
+            self.assertEqual(res["components"]["orders"]["files"], 2)
+            pairs = {(x["a"], x["b"]): x for x in res["pairs"]}
+            self.assertEqual(pairs[("billing", "orders")], {"a": "billing", "b": "orders", "together": 3,
+                                                            "degree": 1.0, "dependency": False})
+            self.assertEqual(pairs[("orders", "web")]["dependency"], True)
+            self.assertEqual(res["pairs"][0]["a"], "billing")  # sorted by together * degree
+            # through the project, with the cache
+            p = project.Project(sub)
+            (sub / ".archplan" / "model.archmodel.json").write_text(json.dumps({"format": "archmodel/1", **m}))
+            r1 = hotspots.hotspots(p, 30, max_files=5, min_together=3)
+            self.assertEqual([(x["a"], x["b"]) for x in r1["pairs"]], [("billing", "orders")])
+            self.assertTrue((sub / ".archplan" / "hotspots.json").exists())
+            self.assertEqual(hotspots.hotspots(p, 30, max_files=5, min_together=3), r1)
+            self.assertEqual(hotspots.info(sub)["head"], r1["head"][:len(hotspots.info(sub)["head"])])
+            self.assertIn("billing <-> orders", hotspots.text(r1))
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(hotspots.info(Path(d)))
+
+
+class SuggestionTest(TempProject):
+    OPS = [{"op": "add_component", "id": "shop.ports", "path": "shop/ports"},
+           {"op": "forbid", "from": "shop.billing", "to": "shop.orders"},
+           {"op": "move_type", "type": "shop.billing.invoice.Payer", "to": "shop.ports"}]
+
+    def test_propose_preview_accept_reject(self):
+        p = project.init(self.root)
+        p.export()
+        a = Agent(p)
+        th = Store(p.dir).create("comp:shop.billing", "billing", "split ports out?", "human")
+        with self.assertRaises(ValueError):  # an op that does not apply saves nothing
+            a.edit_target([{"op": "move_type", "type": "nope", "to": "shop"}])
+        out = a.edit_target(self.OPS, note="Ports out of billing", thread=th["id"])
+        self.assertEqual((out["status"], out["ops"]), ("pending", 3))
+        self.assertFalse(p.target_path.exists())  # the target is unchanged
+        self.assertIn(out["suggestion"], Store(p.dir).read()["threads"][0]["messages"][-1]["text"])
+        sid = out["suggestion"]
+        self.assertEqual(a.status()["suggestions"]["pending"], 1)
+        srv, url = serve_in_thread(p)
+        try:
+            st, d = call(url, "/api/suggestions")
+            self.assertEqual([x["id"] for x in d["suggestions"]], [sid])
+            key = d["key"]
+            st, d = call(url, f"/api/suggestions/{sid}/preview?ops=0,1")
+            self.assertEqual(st, 200)
+            self.assertIn("shop.ports", d["target"]["components"])
+            self.assertEqual(d["target"]["types"]["shop.billing.invoice.Payer"]["component"], "shop.billing")
+            self.assertEqual(call(url, f"/api/suggestions/{sid}/preview?ops=2")[0], 409)  # needs op 0 first
+            self.assertEqual(call(url, f"/api/suggestions/{sid}/preview?ops=7")[0], 400)
+            self.assertEqual(call(url, "/api/suggestions/sg-nope/preview")[0], 404)
+            st, d = call(url, f"/api/suggestions/{sid}/accept", "POST", {"ops": [1, 0]})
+            self.assertEqual(st, 200)
+            sg = d["suggestion"]
+            self.assertEqual((sg["status"], sg["accepted"]), ("partial", [0, 1]))
+            self.assertIsNotNone(sg["decided"])
+            self.assertNotEqual(d["key"], key)  # the editor's poll sees the change
+            t = json.loads(p.target_path.read_text())
+            self.assertIn("shop.ports", t["components"])
+            self.assertEqual(p.state()["target_by"], "agent-suggestion")
+            self.assertEqual(call(url, f"/api/suggestions/{sid}/reject", "POST", {})[0], 409)  # already decided
+            # a second suggestion, made against the new target, is rejected
+            sid2 = a.edit_target(self.OPS[2:])["suggestion"]
+            st, d = call(url, f"/api/suggestions/{sid2}/reject", "POST", {})
+            self.assertEqual((d["suggestion"]["status"], d["suggestion"]["accepted"]), ("rejected", []))
+            self.assertEqual(json.loads(p.target_path.read_text()), t)
+            # an op that no longer applies cannot be accepted
+            sid3 = a.edit_target([{"op": "add_component", "id": "shop.x"}])["suggestion"]
+            model.edit_target(p, [{"op": "add_component", "id": "shop.x"}], by="editor")
+            self.assertEqual(call(url, f"/api/suggestions/{sid3}/accept", "POST", {})[0], 409)
+            self.assertEqual(Suggestions(p.dir).get(sid3)["status"], "pending")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        from archplan.watch import suggestion_line
+        self.assertEqual(suggestion_line(sg), f"suggestion {sid} in thread {th['id']} partly accepted "
+                                              "(2 of 3 ops: 0, 1): Ports out of billing")
+
+
+class ThreadExtrasTest(TempProject):
+    def test_snapshot_and_mentions(self):
+        p = project.init(self.root)
+        p.export()
+        snap = {"view": "Components", "mode": "Diff", "focus": "shop.orders", "filters": {"hideLeaves": True},
+                "nodes": [{"id": "shop.orders", "label": "Orders"}, "shop.billing"],
+                "edges": [{"from": "shop.orders", "to": "shop.billing"}]}
+        srv, url = serve_in_thread(p)
+        try:
+            st, th = call(url, "/api/threads", "POST", {"anchor": "comp:shop.orders", "snapshot": snap,
+                                                        "text": "Why does @[Orders](comp:shop.orders) call "
+                                                                "@[Invoice](type:shop.billing.invoice.Invoice)?"})
+            self.assertEqual((st, th["snapshot"]), (200, snap))
+            big = {"nodes": ["x" * 100] * 1000}
+            self.assertEqual(call(url, "/api/threads", "POST", {"anchor": "a", "text": "b", "snapshot": big})[0], 400)
+            self.assertEqual(call(url, "/api/activity")[1], {})
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        r = Agent(p).read_thread(th["id"])
+        self.assertEqual(r["snapshot"], "snapshot: Components view; Diff; focus: shop.orders; filters: hideLeaves; "
+                                        "nodes (2): Orders, shop.billing; edges (1): shop.orders -> shop.billing")
+        self.assertEqual(r["messages"][0]["text"],
+                         "Why does @Orders (comp:shop.orders) call @Invoice (type:shop.billing.invoice.Invoice)?")
+        self.assertEqual(mentions("see @[](task:t1) and @[a]b"), "see @task:t1 (task:t1) and @[a]b")
+        self.assertEqual(snapshot_text({}), "snapshot: empty")
+
+    def test_activity(self):
+        p = project.init(self.root)
+        p.export()
+        reqs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                 "params": {"name": "open_thread", "arguments": {"anchor": "task:split-orders", "text": "done?"}}}]
+        subprocess.run([str(ROOT / "bin" / "archplan"), "mcp"], cwd=self.root, capture_output=True, text=True,
+                       input="\n".join(json.dumps(x) for x in reqs) + "\n", timeout=30)
+        act = json.loads(p.path("activity.json").read_text())
+        self.assertEqual((act["tool"], act["summary"], act["task"]),
+                         ("open_thread", "Opened a thread on task:split-orders", "split-orders"))
+        th = Store(p.dir).read()["threads"][0]
+        record(p, Store(p.dir), "reply", {"id": th["id"], "text": "x"})
+        act = json.loads(p.path("activity.json").read_text())
+        self.assertEqual((act["summary"], act["thread"], act["task"]),
+                         (f"Replied in thread {th['id']}", th["id"], "split-orders"))
+        record(p, Store(p.dir), "edit_target", {"ops": [{}, {}]})
+        self.assertEqual(json.loads(p.path("activity.json").read_text())["summary"], "Proposed 2 change(s)")
 
 
 if __name__ == "__main__":

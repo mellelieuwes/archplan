@@ -1,0 +1,225 @@
+"""Hotspots and logical coupling from git history.
+
+A hotspot is a component that changes often. Two components are coupled when
+they change in the same commits. Coupled components without a dependency in
+the model are hidden coupling: something ties them together that the code's
+imports do not show.
+
+Only git itself runs. Settings that would make git run other programs
+(fsmonitor, hooks, signature checks, diff drivers) are switched off."""
+
+from __future__ import annotations
+
+import fnmatch
+import subprocess
+import time
+from collections import Counter, defaultdict
+from itertools import combinations
+from pathlib import Path
+
+from .project import Project, ProjectError, etag, read_json, write_json
+
+MAX_COMMITS = 3000
+MAX_FILES = 50  # a commit that touches more files is a bulk change: skipped
+MIN_TOGETHER = 3
+MIN_DEGREE = 0.3
+MAX_PAIRS = 200
+
+SAFE = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "log.showSignature=false"]
+
+
+class NotGit(ProjectError):
+    pass
+
+
+def git(cwd: Path, *args: str, timeout: float = 120) -> str:
+    try:
+        r = subprocess.run(["git", *SAFE, *args], cwd=cwd, capture_output=True, text=True,
+                           timeout=timeout, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise NotGit(f"git failed: {e}") from e
+    if r.returncode != 0:
+        raise NotGit(r.stderr.strip() or f"git {args[0]} failed")
+    return r.stdout
+
+
+def toplevel(root: Path) -> Path:
+    return Path(git(root, "rev-parse", "--show-toplevel").strip())
+
+
+def info(root: Path) -> dict | None:
+    """The current branch and short HEAD, or None outside a git repository."""
+    try:
+        branch = git(root, "rev-parse", "--abbrev-ref", "HEAD", timeout=5).strip()
+        head = git(root, "rev-parse", "--short", "HEAD", timeout=5).strip()
+    except NotGit:
+        return None
+    return {"branch": None if branch == "HEAD" else branch, "head": head}  # no branch when detached
+
+
+def history(top: Path, since_days: int, max_commits: int = MAX_COMMITS) -> list:
+    """Commits newest first: (sha, author email, iso date, [paths])."""
+    out = git(top, "log", "--no-merges", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv",
+              f"--since={int(since_days)} days ago", f"--max-count={int(max_commits)}",
+              "--name-only", "--format=%x1e%H%x1f%aE%x1f%aI", timeout=300)
+    commits = []
+    for chunk in out.split("\x1e")[1:]:
+        head, _, files = chunk.partition("\n")
+        sha, email, date = (head.split("\x1f") + ["", ""])[:3]
+        commits.append((sha, email.lower(), date, [f for f in files.splitlines() if f.strip()]))
+    return commits
+
+
+class Mapper:
+    """Maps a file path (relative to the model's root) to a component.
+
+    A component's `match` patterns decide first: an exact file, a `dir/**`
+    prefix, or another glob. The longest literal part wins. Files no pattern
+    covers fall back to the longest component `path` that contains them."""
+
+    def __init__(self, components: dict):
+        self.rules = []  # (literal length, kind, pattern, component)
+        self.paths = []  # (path, component)
+        for cid, c in components.items():
+            if c.get("kind") == "external":
+                continue
+            for pat in c.get("match") or []:
+                pat = pat.strip("/")
+                if pat.endswith("/**") and "*" not in pat[:-3]:
+                    self.rules.append((len(pat) - 3, "dir", pat[:-3], cid))
+                elif "*" in pat or "?" in pat or "[" in pat:
+                    lit = len(pat.split("*")[0].split("?")[0].split("[")[0])
+                    self.rules.append((lit, "glob", pat, cid))
+                else:
+                    self.rules.append((len(pat) + 1, "file", pat, cid))
+            if c.get("path"):
+                self.paths.append((c["path"].strip("/"), cid))
+        # A path that several components share says nothing about which one owns a file.
+        shared = Counter(path for path, _ in self.paths)
+        self.paths = [x for x in self.paths if shared[x[0]] == 1]
+        self.rules.sort(key=lambda r: -r[0])
+        self.paths.sort(key=lambda r: -len(r[0]))
+        self.cache = {}
+
+    def __call__(self, f: str) -> str | None:
+        if f not in self.cache:
+            self.cache[f] = self.lookup(f)
+        return self.cache[f]
+
+    def lookup(self, f: str) -> str | None:
+        for _, kind, pat, cid in self.rules:
+            if (kind == "file" and f == pat) or (kind == "dir" and f.startswith(pat + "/")) \
+                    or (kind == "glob" and fnmatch.fnmatchcase(f, pat)):
+                return cid
+        for path, cid in self.paths:
+            if f == path or f.startswith(path + "/"):
+                return cid
+        return None
+
+
+def best_prefix(files, mapper: Mapper, hint: str = "") -> str:
+    """The directory to strip from git paths so they line up with the model's
+    paths. A model exported in a subdirectory (say with `-C core`) has paths
+    like lib/x.ex, while git reports core/lib/x.ex. Tries no prefix, hint (the
+    project root inside the repository), and the first one or two directories
+    of the files; keeps the one that maps the most files."""
+    files = sorted(files)[:2000]
+    dirs = Counter()
+    for f in files:
+        parts = f.split("/")
+        for n in (1, 2):
+            if len(parts) > n:
+                dirs["/".join(parts[:n]) + "/"] += 1
+    cands = {"", hint} | {d for d, _ in dirs.most_common(12)}
+
+    def score(pre):
+        return sum(1 for f in files if f.startswith(pre) and mapper(f[len(pre):]))
+    return max(sorted(cands, key=lambda c: (len(c), c)), key=score)
+
+
+def analyse(commits: list, model: dict, prefix: str | None = None, hint: str = "",
+            max_files: int = MAX_FILES, min_together: int = MIN_TOGETHER, min_degree: float = MIN_DEGREE,
+            max_pairs: int = MAX_PAIRS) -> dict:
+    """Change counts per component and coupled pairs, from commits as history()
+    returns them."""
+    mapper = Mapper(model.get("components") or {})
+    used = [c for c in commits if len(c[3]) <= max_files]
+    if prefix is None:
+        prefix = best_prefix({f for c in used for f in c[3]}, mapper, hint)
+    n_commits, authors, files, last = Counter(), defaultdict(set), defaultdict(set), {}
+    together, unmapped = Counter(), set()
+    for sha, email, date, paths in used:
+        comps = set()
+        for f in paths:
+            cid = mapper(f[len(prefix):]) if f.startswith(prefix) else None
+            if cid is None:
+                unmapped.add(f)
+                continue
+            comps.add(cid)
+            files[cid].add(f)
+        for cid in comps:
+            n_commits[cid] += 1
+            authors[cid].add(email)
+            last.setdefault(cid, date)  # newest first
+        together.update(combinations(sorted(comps), 2))
+    deps = {(d["from"], d["to"]) for d in model.get("dependencies") or []}
+    pairs = []
+    for (a, b), n in together.items():
+        deg = n / min(n_commits[a], n_commits[b])
+        if n >= min_together and deg >= min_degree:
+            pairs.append({"a": a, "b": b, "together": n, "degree": round(deg, 3),
+                          "dependency": (a, b) in deps or (b, a) in deps})
+    pairs.sort(key=lambda x: (-x["together"] * x["degree"], x["a"], x["b"]))
+    return {"commits": len(used), "skipped": len(commits) - len(used), "unmapped": len(unmapped),
+            "prefix": prefix,
+            "components": {cid: {"commits": n, "authors": len(authors[cid]), "files": len(files[cid]),
+                                 "last": last[cid]} for cid, n in n_commits.most_common()},
+            "pairs": pairs[:max_pairs]}
+
+
+def hotspots(p: Project, since_days: int = 365, refresh: bool = False, **kw) -> dict:
+    """The analysis for this project, from .archplan/hotspots.json when HEAD,
+    the period, the model and the thresholds are unchanged. Raises NotGit
+    outside a git repository."""
+    top = toplevel(p.root)
+    head = git(top, "rev-parse", "HEAD").strip()
+    key = {"head": head, "since_days": int(since_days), "model": etag(p.model_path),
+           **{k: kw[k] for k in sorted(kw)}}
+    cache = p.path("hotspots.json")
+    old = read_json(cache) or {}
+    if not refresh and old.get("key") == key:
+        return old["result"]
+    model = read_json(p.model_path) or p.target_or_model() or {}
+    t = time.monotonic()
+    commits = history(top, since_days)
+    rel = p.root.relative_to(top).as_posix() if p.root != top else ""
+    res = {"head": head, "since_days": int(since_days),
+           **analyse(commits, model, hint=rel + "/" if rel else "", **kw),
+           "seconds": round(time.monotonic() - t, 2)}
+    write_json(cache, {"key": key, "result": res})
+    return res
+
+
+def summary(res: dict, limit: int = 10) -> dict:
+    """The top hotspots and couplings, small enough for an agent's context."""
+    comps = sorted(res["components"].items(), key=lambda kv: -kv[1]["commits"])
+    return {"head": res["head"][:10], "since_days": res["since_days"], "commits": res["commits"],
+            "skipped_bulk_commits": res["skipped"], "unmapped_files": res["unmapped"],
+            "hotspots": [{"component": c, **v} for c, v in comps[:limit]],
+            "hidden_coupling": [x for x in res["pairs"] if not x["dependency"]][:limit],
+            "coupling_with_dependency": [x for x in res["pairs"] if x["dependency"]][:limit]}
+
+
+def text(res: dict, limit: int = 10) -> str:
+    s = summary(res, limit)
+    lines = [f"{s['commits']} commits in the last {s['since_days']} days (HEAD {s['head']}); "
+             f"{s['skipped_bulk_commits']} bulk commits skipped, {s['unmapped_files']} files outside any component.",
+             "", "Hotspots (commits, authors, files, last change):"]
+    for h in s["hotspots"]:
+        lines.append(f"  {h['commits']:5}  {h['authors']:3}  {h['files']:5}  {h['last'][:10]}  {h['component']}")
+    lines += ["", "Hidden coupling: change together, no dependency in the model (together, degree):"]
+    for x in s["hidden_coupling"] or []:
+        lines.append(f"  {x['together']:5}  {x['degree']:.2f}  {x['a']} <-> {x['b']}")
+    if not s["hidden_coupling"]:
+        lines.append("  none above the thresholds")
+    return "\n".join(lines)

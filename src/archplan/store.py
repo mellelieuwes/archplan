@@ -1,10 +1,14 @@
 """Comment threads in .archplan/threads.json, shared by the editor server and
-the MCP server. Writes take a file lock, so both may run at once."""
+the MCP server. Writes take a file lock, so both may run at once.
+
+Messages may mention model items as @[Label](anchor). The editor writes them;
+mentions() turns them into plain text for the agent."""
 
 from __future__ import annotations
 
 import fcntl
 import json
+import re
 import time
 import uuid
 from contextlib import contextmanager
@@ -13,12 +17,20 @@ from pathlib import Path
 from .project import write_json
 
 
-class Store:
+SNAPSHOT_MAX = 64 * 1024  # bytes of JSON a thread's graph snapshot may take
+
+
+class JsonStore:
+    """A JSON file with a version counter that every write bumps. Writes hold a
+    lock file and replace the file atomically."""
+    name = "threads"
+    empty = {"threads": []}
+
     def __init__(self, dir: Path):
         self.dir = dir
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.path = dir / "threads.json"
-        self.lock_path = dir / ".threads.lock"
+        self.path = dir / f"{self.name}.json"
+        self.lock_path = dir / f".{self.name}.lock"
 
     @contextmanager
     def locked(self):
@@ -33,7 +45,7 @@ class Store:
         try:
             return json.loads(self.path.read_text())
         except FileNotFoundError:
-            return {"version": 0, "threads": []}
+            return {"version": 0, **json.loads(json.dumps(self.empty))}
 
     def version(self) -> int:
         return self.read().get("version", 0)
@@ -47,12 +59,20 @@ class Store:
             write_json(self.path, data)
             return out
 
+
+class Store(JsonStore):
     def create(self, anchor: str, label: str, text: str, author: str,
-               kind: str | None = None, options: list | None = None) -> dict:
+               kind: str | None = None, options: list | None = None, snapshot: dict | None = None) -> dict:
         now = stamp()
         th = {"id": "th-" + uuid.uuid4().hex[:8], "anchor": anchor, "label": label or anchor,
               "status": "open", "created": now, "updated": now,
               "messages": [message(author, text, now, kind, options)]}
+        if snapshot is not None:
+            if not isinstance(snapshot, dict):
+                raise ValueError("snapshot must be an object")
+            if len(json.dumps(snapshot)) > SNAPSHOT_MAX:
+                raise ValueError(f"snapshot larger than {SNAPSHOT_MAX // 1024} KB")
+            th["snapshot"] = snapshot
         self.update(lambda d: d["threads"].append(th))
         return th
 
@@ -125,3 +145,11 @@ def needs(th: dict) -> str | None:
     if who_next(th) != "human":
         return None
     return th["messages"][-1].get("kind", "feedback")
+
+
+MENTION = re.compile(r"@\[([^\]\n]*)\]\(([^)\s]+)\)")
+
+
+def mentions(text: str) -> str:
+    """Write each @[Label](anchor) mention as @Label (anchor)."""
+    return MENTION.sub(lambda m: f"@{m.group(1) or m.group(2)} ({m.group(2)})", text or "")

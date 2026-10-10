@@ -11,25 +11,32 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
+from urllib.parse import unquote
 
+from . import hotspots
 from .project import Project, ProjectError, UntrustedExport, etag, read_json, write_atomic, write_json
 from .store import Store, wait
+from .suggestions import Conflict, Suggestions, pick, preview
 
 LONG_POLL = 25.0  # seconds the editor's request for changes may wait
 STATIC = Path(str(resources.files("archplan") / "static"))
 
 
 def changes(p: Project, store: Store) -> dict:
-    """What the editor polls for: threads, the as-is model and the target revision."""
+    """What the editor polls for: threads, the as-is model, the target revision,
+    the agent's suggestions and its last activity. key changes when any does."""
     st = p.state()
     c = {"version": store.version(), "model_etag": etag(p.model_path),
-         "target_rev": st.get("target_rev", 0), "target_by": st.get("target_by")}
-    c["key"] = f"{c['version']}.{c['model_etag']}.{c['target_rev']}"
+         "target_rev": st.get("target_rev", 0), "target_by": st.get("target_by"),
+         "suggestions_version": Suggestions(p.dir).version(), "activity_etag": etag(p.path("activity.json"))}
+    c["key"] = ".".join(str(c[k]) for k in ("version", "model_etag", "target_rev", "suggestions_version", "activity_etag"))
     return c
 
 
 def make_handler(p: Project, store: Store):
     export_lock = threading.Lock()
+    hotspot_lock = threading.Lock()
+    suggestions = Suggestions(p.dir)
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
@@ -98,6 +105,7 @@ def make_handler(p: Project, store: Store):
                 return self.send_json({"collab": True, "name": p.name, "root": str(p.root), "dir": str(p.dir),
                                        "model": "/api/model" if p.model_path.exists() else None,
                                        "can_export": bool(p.export_command()),
+                                       "git": hotspots.info(p.root),
                                        "intent": st.get("intent", ""), **changes(p, store)})
             if path == "/api/model":
                 return self.send_file(p.model_path)
@@ -114,6 +122,35 @@ def make_handler(p: Project, store: Store):
                 if since == changes(p, store)["key"]:
                     wait(lambda: changes(p, store)["key"], since, LONG_POLL)
                 return self.send_json({**store.read(), **changes(p, store)})
+            if path == "/api/activity":
+                return self.send_json(read_json(p.path("activity.json"), {}) or {})
+            if path == "/api/suggestions":
+                return self.send_json({"suggestions": suggestions.newest(), **changes(p, store)})
+            parts = path.strip("/").split("/")
+            if len(parts) == 4 and parts[:2] == ["api", "suggestions"] and parts[3] == "preview":
+                try:
+                    sg = suggestions.get(parts[2])
+                    ops = params.get("ops")
+                    idx = None if ops is None else [int(x) for x in unquote(ops).split(",") if x.strip()]
+                    m, done = preview(p, sg, idx)
+                    return self.send_json({"target": m, "applied": done, "ops": pick(sg, idx)})
+                except KeyError as e:
+                    return self.send_json({"error": str(e).strip("'\"")}, HTTPStatus.NOT_FOUND)
+                except Conflict as e:
+                    return self.send_json({"error": str(e)}, HTTPStatus.CONFLICT)
+                except ValueError as e:
+                    return self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+            if path == "/api/hotspots":
+                try:
+                    with hotspot_lock:
+                        kw = {k: t(params[q]) for q, k, t in (("together", "min_together", int),
+                                                               ("degree", "min_degree", float)) if q in params}
+                        return self.send_json(hotspots.hotspots(p, int(params.get("since", 365)),
+                                                                refresh=params.get("refresh") == "1", **kw))
+                except hotspots.NotGit as e:
+                    return self.send_json({"error": f"no git history: {e}"}, HTTPStatus.NOT_FOUND)
+                except ValueError as e:
+                    return self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
             return super().do_GET()
 
         def do_POST(self):
@@ -124,13 +161,25 @@ def make_handler(p: Project, store: Store):
                 b = self.body() or {}
                 if parts == ["api", "threads"]:
                     return self.send_json(store.create(b["anchor"], b.get("label", ""), b["text"],
-                                                       b.get("author", "human"), b.get("kind"), b.get("options")))
+                                                       b.get("author", "human"), b.get("kind"), b.get("options"),
+                                                       b.get("snapshot")))
                 if parts == ["api", "threads", "merge"]:
                     store.merge(b.get("threads", []))
                     return self.send_json(store.read())
                 if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "messages":
                     return self.send_json(store.reply(parts[2], b.get("text", ""), b.get("author", "human"),
                                                       b.get("status"), b.get("kind"), b.get("options")))
+                if len(parts) == 4 and parts[:2] == ["api", "suggestions"] and parts[3] in ("accept", "reject"):
+                    idx = [] if parts[3] == "reject" else b.get("ops")
+                    if parts[3] == "accept" and idx is not None and (not isinstance(idx, list) or not idx):
+                        raise ValueError("ops must be a non-empty list of op indices; reject to accept none")
+                    try:
+                        sg = suggestions.decide(p, parts[2], idx)
+                    except KeyError as e:
+                        return self.send_json({"error": str(e).strip("'\"")}, HTTPStatus.NOT_FOUND)
+                    except Conflict as e:
+                        return self.send_json({"error": str(e)}, HTTPStatus.CONFLICT)
+                    return self.send_json({"suggestion": sg, **changes(p, store)})
                 if parts == ["api", "export"]:
                     if not export_lock.acquire(blocking=False):
                         return self.send_json({"error": "an export is already running"}, HTTPStatus.CONFLICT)
@@ -142,7 +191,7 @@ def make_handler(p: Project, store: Store):
                 return self.send_json({"error": str(e)}, HTTPStatus.FORBIDDEN)
             except ProjectError as e:
                 return self.send_json({"error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR)
-            except (KeyError, ValueError) as e:
+            except (KeyError, TypeError, ValueError) as e:
                 return self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
             self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 

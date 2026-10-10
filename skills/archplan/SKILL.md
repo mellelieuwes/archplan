@@ -45,7 +45,8 @@ The human works in the editor while you work here. You learn about their
 comments three ways:
 
 - The plugin's `archplan` monitor runs in every session and sends one event
-  per new human comment, resolved thread or plan change. Act on each event.
+  per new human comment, resolved thread, plan change, or suggestion the
+  human accepted, partly accepted or rejected. Act on each event.
 - At each user prompt a hook lists threads that wait on you.
 - `wait_for_comments` blocks until the human writes, when you have nothing else
   to do and the user asked you to keep watching.
@@ -67,14 +68,35 @@ start `archplan watch` with the Monitor tool yourself.
    formats in the tool description). Use a `group:` anchor for a finding about
    several items at once, such as an import cycle.
 
-## 5. Model before you build
+To point at a model item inside a message, write `@[Label](anchor)`, for
+example `@[Orders](comp:shop.orders)`. The editor shows it as a link. The
+human's mentions reach you as `@Label (anchor)`. A thread the human started
+from a graph has a `snapshot` line: the view, mode, focus and the items that
+were on screen.
+
+## 5. Find coupling worth discussing
+
+`get_hotspots` reads the git history. It lists the components that change
+most, and pairs that change in the same commits. Pairs under
+`hidden_coupling` have no dependency in the model. They often share a
+concept, a data format or a duplicated rule. Check a few in the code, then
+`open_thread` on `group:comp:<a>|comp:<b>` with what ties them together.
+`archplan hotspots` prints the same in a terminal.
+
+## 6. Model before you build
 
 When the human asks you to model a change, use `edit_target` (add or move
-components and types, forbid or permit dependencies). The editor shows it in
-its Diff view, and the human can undo it. Then `get_plan` shows the tasks the
-change implies; summarise them in the thread and ask whether to implement.
+components and types, forbid or permit dependencies). It does not change the
+target. It saves a suggestion that the human previews in the editor and
+accepts in full, in part, or not at all. Pass `thread` so the suggestion is
+linked to the thread it answers, and a one-line `note`.
 
-## 6. Implement
+You learn the outcome from the monitor (a `suggestion ... accepted` line) or
+from `status`. After an accept, `get_plan` shows the tasks the change implies;
+summarise them in the thread and ask whether to implement. After a reject,
+ask in the thread what to change, or let it go.
+
+## 7. Implement
 
 - Work on a new branch or in a git worktree, never on the user's current
   branch without asking. Commit only when the user agreed; never push without
@@ -92,3 +114,4 @@ change implies; summarise them in the thread and ask whether to implement.
 | `archplan up` / `down` | start or stop the editor in the background |
 | `archplan export` | re-export the as-is model from the code |
 | `archplan threads --waiting agent` | threads that wait on you, as text |
+| `archplan hotspots` | hotspots and hidden coupling from the git history |

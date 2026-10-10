@@ -8,186 +8,320 @@
 <script src="vendor/cytoscape-dagre.js"></script>
 <script src="vendor/marked.min.js"></script>
 <style>
+[hidden]{display:none!important}
 :root{--bg:#f8fafc;--panel:#fff;--line:#e2e8f0;--ink:#0f172a;--mute:#64748b;--add:#16a34a;--rem:#dc2626;--chg:#d97706;--mov:#7c3aed;--acc:#2563eb;--acc2:#1d4ed8;
   --soft:#f1f5f9;--chip:#e2e8f0;--chip-ink:#334155;--edge:#94a3b8;--kbd:#cbd5e1;--sel:#eff6ff;--sel-line:#bfdbfe;--sel-ink:#1e3a8a;--sel-chip:#dbeafe;
-  --warn:#fef3c7;--warn-ink:#92400e;--warn-line:#fde68a;--quote:#fffbeb;--agent:#7c3aed;--agent-bg:#ede9fe;--agent-ink:#5b21b6;--human:#0369a1;--glass:rgba(255,255,255,.92);color-scheme:light}
+  --warn:#fef3c7;--warn-ink:#92400e;--warn-line:#fde68a;--quote:#fffbeb;--agent:#7c3aed;--agent-bg:#ede9fe;--agent-ink:#5b21b6;--human:#0369a1;--glass:rgba(255,255,255,.92);
+  --addbg:#ecfdf5;--add-ink:#166534;--add-line:#bbf7d0;--rembg:#fef2f2;--rem-ink:#991b1b;color-scheme:light}
 :root[data-theme=dark]{--bg:#0b1120;--panel:#111827;--line:#283548;--ink:#e2e8f0;--mute:#94a3b8;--add:#22c55e;--rem:#f87171;--chg:#f59e0b;--mov:#a78bfa;--acc:#3b82f6;--acc2:#60a5fa;
   --soft:#1e293b;--chip:#273449;--chip-ink:#cbd5e1;--edge:#64748b;--kbd:#475569;--sel:#172554;--sel-line:#1e40af;--sel-ink:#bfdbfe;--sel-chip:#1e3a8a;
-  --warn:#422006;--warn-ink:#fcd34d;--warn-line:#a16207;--quote:#292524;--agent:#a78bfa;--agent-bg:#2e1065;--agent-ink:#c4b5fd;--human:#38bdf8;--glass:rgba(17,24,39,.92);color-scheme:dark}
+  --warn:#422006;--warn-ink:#fcd34d;--warn-line:#a16207;--quote:#292524;--agent:#a78bfa;--agent-bg:#2e1065;--agent-ink:#c4b5fd;--human:#38bdf8;--glass:rgba(17,24,39,.92);
+  --addbg:#052e16;--add-ink:#86efac;--add-line:#166534;--rembg:#450a0a;--rem-ink:#fca5a5;color-scheme:dark}
 /* The diagram keeps its light palette and is inverted, so layer and diff colours keep their hue. */
-:root[data-theme=dark] #cy,:root[data-theme=dark] #seq,:root[data-theme=dark] #legend i{filter:invert(.92) hue-rotate(180deg)}
+:root[data-theme=dark] #cy,:root[data-theme=dark] #seq,:root[data-theme=dark] #legend i,:root[data-theme=dark] #ovLegend i,:root[data-theme=dark] .snap svg,:root[data-theme=dark] #ovLegend .ramp,:root[data-theme=dark] #ovLegend svg{filter:invert(.92) hue-rotate(180deg)}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:var(--ink);background:var(--bg)}
-code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
-header{height:52px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--panel)}
-.brand{font-weight:700;font-size:15px}.brand span{font-weight:400;color:var(--mute)}
-.repo{color:var(--mute)}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.seg button{border:0;background:none;padding:6px 11px;cursor:pointer;color:var(--mute);font:inherit}
+html,body{margin:0;height:100%;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:var(--ink);background:var(--bg)}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+header{height:48px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--panel);position:relative;z-index:30}
+.brand{font-weight:700;font-size:16px}
+.proj{color:var(--mute)}
+#repo{color:var(--mute);font-size:12px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+.seg button{border:0;background:none;padding:5px 10px;cursor:pointer;color:var(--mute);font:inherit}
 .seg button.on{background:var(--ink);color:var(--panel)}
+.seg button:disabled{opacity:.35;cursor:default}
 .spacer{flex:1}
 .btn{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:5px 10px;cursor:pointer;font:inherit;color:var(--ink);white-space:nowrap}
 .btn:hover{border-color:var(--edge)}.btn:disabled{opacity:.4;cursor:default}
+.btn.on{background:var(--sel);border-color:var(--sel-line);color:var(--sel-ink)}
+.btn.ico{width:32px;padding:5px 0;text-align:center}
 .primary{background:var(--acc);border-color:var(--acc);color:#fff}.primary:hover{border-color:var(--acc2);background:var(--acc2)}
 .danger{color:var(--rem)}
+.linkb{border:0;background:none;padding:0;color:var(--acc);cursor:pointer;font:inherit;text-align:left}
+ul.plain{list-style:none;margin:0;padding:0;display:grid;gap:4px}
 select,input,textarea{font:inherit;border:1px solid var(--line);border-radius:6px;padding:5px 7px;background:var(--panel);color:var(--ink);min-width:0}
 textarea{width:100%;resize:vertical}
-main{display:flex;height:calc(100% - 52px)}
-#stage{flex:1;position:relative;min-width:0;background:var(--panel)}
+.kbd,kbd{border:1px solid var(--kbd);border-bottom-width:2px;border-radius:4px;padding:0 4px;font-size:12px;color:var(--mute);background:var(--bg);font-family:inherit}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px;font:inherit;font-size:13px;background:var(--soft);color:var(--chip-ink);border:0;white-space:nowrap;max-width:440px;overflow:hidden;text-overflow:ellipsis}
+button.pill{cursor:pointer}
+.pill.agent{background:var(--agent-bg);color:var(--agent-ink)}.pill.warn{background:var(--warn);color:var(--warn-ink)}
+.pill.rem{background:var(--rembg);color:var(--rem-ink)}.pill.add{background:var(--addbg);color:var(--add-ink)}.pill.acc{background:var(--sel);color:var(--sel-ink)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:var(--edge);flex:none}.dot.live{background:var(--agent)}.dot.warn{background:var(--chg)}
+.menu-wrap{position:relative}
+.menu{position:absolute;right:0;top:calc(100% + 5px);background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 30px rgba(15,23,42,.18);padding:5px;min-width:230px;z-index:40}
+.menu.left{right:auto;left:0}
+.menu[hidden]{display:none}
+.mi{display:flex;width:100%;text-align:left;border:0;background:none;padding:6px 9px;border-radius:6px;font:inherit;color:var(--ink);cursor:pointer;gap:8px;align-items:center;white-space:nowrap}
+.mi:hover{background:var(--soft)}.mi:disabled{opacity:.45;cursor:default;background:none}.mi .r{margin-left:auto;color:var(--mute);font-size:12px;padding-left:14px}
+.mi .why{display:block;font-size:12px;color:var(--mute);white-space:normal}
+.mi.on{font-weight:600}.mi.on::before{content:"✓";width:12px}.mi.off::before{content:"";width:12px}
+.sep{height:1px;background:var(--line);margin:4px 2px}
+.mh{font-size:12px;text-transform:uppercase;color:var(--mute);padding:7px 9px 3px;letter-spacing:.04em;font-weight:600}
+main{display:flex;height:calc(100% - 48px)}
+/* outline */
+#outline{width:148px;flex:none;border-right:1px solid var(--line);background:var(--panel);padding:18px 8px;font-size:13px;overflow:auto}
+#outline .mh{padding-left:8px}
+.ol{display:flex;padding:4px 8px;border-radius:6px;cursor:pointer;gap:6px}.ol:hover{background:var(--soft)}.ol .n{margin-left:auto;color:var(--mute)}.ol .n.warn{color:var(--chg);font-weight:600}
+@media (max-width:1250px){#outline{display:none}}
+/* plan document and item pages */
+aside#doc{width:480px;flex:none;background:var(--panel);display:flex;flex-direction:column;min-height:0}
+#panel{flex:1;overflow:auto;padding:18px 22px 60px}
+#split{width:7px;margin:0 -3px;cursor:col-resize;z-index:5;flex:none;position:relative}
+#split::after{content:"";position:absolute;left:3px;top:0;bottom:0;width:1px;background:var(--line)}
+#split:hover,body.resizing #split{background:var(--acc);opacity:.35}
+body.resizing{cursor:col-resize;user-select:none}
+.crumb{font-size:13px;color:var(--mute);margin-bottom:8px}.crumb a{color:var(--acc);cursor:pointer}
+.doc-title{font-size:22px;font-weight:600;margin:0 0 6px;line-height:1.3}
+.doc-title.empty{color:var(--mute);font-weight:500}
+#i-intent{background:var(--soft);border-color:transparent;font-size:14px;line-height:1.5}
+#i-intent:focus{border-color:var(--sel-line);background:var(--panel)}
+.pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px}
+.dsec{margin-top:20px}
+h4{margin:16px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);display:flex;align-items:center;gap:6px}
+.dsec>h4{margin-top:0}
+.rule-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;background:var(--soft);margin:4px 0}
+.rule-row.bad{background:var(--rembg);color:var(--rem-ink)}.rule-row .n{margin-left:auto;font-size:13px;white-space:nowrap}
+.task{border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin:8px 0}
+.task.dec{border-color:#f59e0b;box-shadow:0 0 0 1px var(--warn-line)}.task.flash,.sug.flash,.thread.flash{box-shadow:0 0 0 3px var(--sel-line)}
+.task-h{display:flex;gap:8px;align-items:baseline}.task-h .tid{font-weight:700;flex:none}.task-h .tt{flex:1}
+.task .meta{font-size:13px;color:var(--mute);display:flex;gap:10px;margin:3px 0 0;flex-wrap:wrap;align-items:center}
+.task details{border:0;padding:0;margin:4px 0 0}.task details>summary{font-weight:400;color:var(--mute);font-size:13px}
+.task .tbody{font-size:13.5px}.task .tbody p{margin:6px 0}.task .tbody ul{padding-left:18px;margin:4px 0}.task .tbody li{margin:3px 0}
+.task .tbody pre{background:var(--soft);padding:8px;border-radius:6px;overflow:auto}
+.tthreads{margin:8px 0 2px 4px;border-left:2px solid var(--line);padding-left:10px}
+.tthreads .thread{border:0;padding:2px 0;margin:4px 0;background:none;box-shadow:none}
+.addrow{display:flex;gap:12px;margin-top:6px;font-size:13px}
+.badge{font-size:12px;padding:1px 6px;border-radius:4px;color:#fff}
+.b-added{background:var(--add)}.b-removed{background:var(--rem)}.b-changed{background:var(--chg)}.b-moved{background:var(--mov)}
+.ins-h{font-size:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ins-h b{font-weight:600}
+.page-act{display:flex;gap:6px;margin-left:auto}
+.kind{font-size:12px;padding:1px 6px;border-radius:4px;background:var(--chip);color:var(--chip-ink)}
+.anchor{color:var(--mute);margin-top:3px}
+.metrics{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 4px}
+.metric{background:var(--soft);border-radius:8px;padding:5px 10px;font-size:13px;color:var(--mute)}.metric b{display:block;font-size:16px;color:var(--ink)}
+ul.members{list-style:none;margin:0;padding:0}
+ul.members li{display:flex;justify-content:space-between;align-items:center;padding:3px 6px;border-radius:5px}
+ul.members li:hover{background:var(--soft)}
+.x{border:0;background:none;color:var(--mute);cursor:pointer;font-size:16px;line-height:1}.x:hover{color:var(--rem)}
+.mute{color:var(--mute)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:8px 0}
+summary{cursor:pointer;font-weight:600}
+details.plain{border:0;padding:0;margin:0}
+.checks label{display:inline-flex;gap:4px;margin-right:10px;align-items:center}
+.row{display:flex;gap:6px;margin:6px 0;align-items:center}.row>input,.row>select{flex:1}
+.chg{padding:5px 8px;border-radius:6px;cursor:pointer;display:flex;gap:8px}
+.chg:hover{background:var(--soft)}
+.chg .op{font-family:ui-monospace,Menlo,monospace;font-weight:700;width:12px}
+.c-add .op{color:var(--add)}.c-rem .op{color:var(--rem)}.c-chg .op{color:var(--chg)}.c-info{color:var(--mute)}
+.grp{margin-top:10px;font-weight:600}
+pre.dsl{background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;overflow:auto;line-height:1.5;margin:0}
+pre.dsl .p{color:#86efac;background:rgba(22,163,74,.18);display:block}
+pre.dsl .m{color:#fca5a5;background:rgba(220,38,38,.18);display:block}
+.md{font-size:14px}.md h1{font-size:19px}.md h2{font-size:16px;border-bottom:1px solid var(--line);padding-bottom:4px;margin-top:22px}.md h3{font-size:15px;margin:18px 0 6px}
+.md pre,.body pre{background:var(--soft);padding:8px;border-radius:6px;overflow:auto}.md code,.body code{background:var(--soft);padding:0 3px;border-radius:3px}.md pre code{background:none;padding:0}
+.md ul{padding-left:20px}.md li{margin:3px 0}.md blockquote{margin:8px 0;padding:6px 10px;border-left:3px solid var(--chg);background:var(--quote)}
+pre.raw{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;margin:0}
+.vrow{display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
+.vrow .s{width:18px;font-weight:700}.ok{color:var(--add)}.bad{color:var(--rem)}
+.empty{color:var(--mute);padding:14px 0}
+.warnbox{background:var(--warn);color:var(--warn-ink);border-radius:8px;padding:7px 10px;margin:6px 0;font-size:13.5px}
+/* threads */
+.thread{border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0;background:var(--panel)}.thread.resolved{opacity:.6}
+.thread .th-h{display:flex;gap:6px;align-items:center;font-size:13px;margin-bottom:4px}.thread .th-h a{cursor:pointer;color:var(--acc)}
+.msg{font-size:14px;margin:6px 0}.msg .who{font-size:12px;font-weight:600;margin-right:6px}.msg .who.agent{color:var(--agent)}.msg .who.human{color:var(--human)}
+.msg .when{font-size:12px;color:var(--mute)}
+.msg .mk{font-size:11px;padding:0 5px;border-radius:8px;background:var(--soft);color:var(--mute);margin-right:6px}.msg .mk.decision{background:var(--warn-line);color:var(--warn-ink);font-weight:600}
+.msg.decision{border-left:3px solid #f59e0b;padding-left:7px}.choices{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.thread.needs-decision{border-color:#f59e0b;box-shadow:0 0 0 1px var(--warn-line)}.wait.fb{background:var(--chip);color:var(--chip-ink)}.msg .body p{margin:2px 0}
+.wait{font-size:12px;border-radius:4px;padding:0 5px}.wait.human{background:var(--warn);color:var(--warn-ink)}.wait.agent{background:var(--agent-bg);color:var(--agent-ink)}
+.cbtn{border:0;background:none;cursor:pointer;font-size:13px;opacity:.35;padding:0 4px}.cbtn:hover,.cbtn.has{opacity:1}
+.collab{font-size:13px;color:var(--mute);margin-top:4px}.collab b.on{color:var(--add)}
+.callout{background:var(--sel);border:1px solid var(--sel-line);border-radius:8px;padding:10px;margin-bottom:12px;color:var(--sel-ink)}
+.mention{background:var(--sel-chip);color:var(--sel-ink);border-radius:4px;padding:0 4px;cursor:pointer;white-space:nowrap}
+.mention:hover{outline:1px solid var(--acc)}
+/* graph snapshot */
+.snap{border:1px solid var(--line);border-radius:9px;overflow:hidden;margin:4px 0 8px;cursor:pointer}
+.snap svg{display:block;width:100%;height:130px;background:#fff}
+.snapbar{display:flex;gap:6px;align-items:center;padding:5px 9px;border-top:1px solid var(--line);background:var(--panel);font-size:13px;color:var(--mute)}
+.snapbar b{color:var(--ink);font-weight:600}.snapbar .linkb{margin-left:auto;white-space:nowrap}
+/* suggestions */
+.sug{border:1px solid var(--add-line);background:var(--addbg);border-radius:9px;padding:10px 12px;margin:8px 0}
+.sug-h{display:flex;gap:8px;align-items:center;color:var(--add-ink);font-weight:600}
+.sug .note{margin:4px 0 6px;font-size:13.5px}.sug .note p{margin:2px 0}
+.sop{display:flex;gap:8px;align-items:center;padding:2px 0;font-family:ui-monospace,Menlo,monospace;font-size:13px;cursor:pointer}
+.sop .k{flex:none}.k-add{color:var(--add)}.k-rem{color:var(--rem)}.k-chg{color:var(--chg)}
+.sug .acts{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap}.sug .eff{margin-left:auto;font-size:13px;color:var(--mute)}
+/* @-mention autocomplete */
+#ac{position:fixed;z-index:70;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 30px rgba(15,23,42,.2);padding:4px;width:320px;max-height:260px;overflow:auto}
+#ac[hidden]{display:none}
+.ac-i{display:flex;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer;align-items:baseline}.ac-i.on{background:var(--sel);color:var(--sel-ink)}.ac-i .r{margin-left:auto;font-size:12px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%}
+/* diagram */
+#stage{flex:1;position:relative;min-width:0;background:var(--panel);display:flex;flex-direction:column}
+#toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel);position:relative;z-index:20}
+#canvas{position:relative;flex:1;min-height:0}
 #cy,#seq{position:absolute;inset:0}
 #seq{overflow:auto}
 #gloss{position:absolute;inset:0;overflow:auto;padding:16px 20px 60px;display:none}
 #gloss table{border-collapse:collapse;width:100%;margin-bottom:6px}
-#gloss th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);font-weight:600;padding:4px 8px;border-bottom:1px solid var(--line)}
+#gloss th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);font-weight:600;padding:4px 8px;border-bottom:1px solid var(--line)}
 #gloss td{padding:5px 8px;border-bottom:1px solid var(--soft);vertical-align:top}
 #gloss tr.pick{cursor:pointer}#gloss tr.pick:hover{background:var(--bg)}#gloss tr.on{background:var(--sel)}
 #gloss tr.removed td{text-decoration:line-through;opacity:.6}
-#gloss .gh{display:flex;align-items:baseline;gap:8px;margin:18px 0 4px}#gloss .gh b{font-size:14px;cursor:pointer}
+#gloss .gh{display:flex;align-items:baseline;gap:8px;margin:18px 0 4px}#gloss .gh b{font-size:15px;cursor:pointer}
 #gloss .lk{color:var(--rem);font-weight:600}
 #gloss table.ct{table-layout:fixed}#gloss .ct th:nth-child(1){width:17%}#gloss .ct th:nth-child(2){width:22%}#gloss .ct th:nth-child(3){width:9%}#gloss .ct th:nth-child(5){width:8%}#gloss .ct th:nth-child(6){width:7%}
-.term{display:inline-block;background:var(--soft);border-radius:4px;padding:0 5px;margin:1px 2px 1px 0;font-size:12px}
-#legend{position:absolute;left:12px;bottom:12px;background:var(--glass);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--mute);display:flex;gap:12px;flex-wrap:wrap;max-width:70%}
-.focus{display:flex;align-items:center;gap:4px;font-size:12px}.focus input[type=text],#focusIn{width:150px}
+.term{display:inline-block;background:var(--soft);border-radius:4px;padding:0 5px;margin:1px 2px 1px 0;font-size:13px}
+#legend{position:absolute;left:12px;bottom:56px;background:var(--glass);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--mute);display:flex;gap:12px;flex-wrap:wrap;max-width:70%;z-index:4}
+#legend i,#ovLegend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+#ovLegend{position:absolute;right:12px;top:12px;background:var(--glass);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px;color:var(--mute);max-width:300px;z-index:4}
+#ovLegend[hidden]{display:none}
+#ovLegend .ramp{height:8px;border-radius:4px;margin:5px 0 2px}
+#canvasBar{position:absolute;left:12px;bottom:12px;display:flex;gap:1px;padding:3px;background:var(--glass);border:1px solid var(--line);border-radius:9px;z-index:6;align-items:center;box-shadow:0 2px 8px rgba(15,23,42,.08)}
+.tb{border:0;background:none;padding:4px 8px;border-radius:6px;cursor:pointer;font:inherit;color:var(--ink);white-space:nowrap}
+.tb:hover{background:var(--soft)}.tb:disabled{opacity:.35;cursor:default;background:none}.tb.on{background:var(--sel);color:var(--sel-ink)}
+#zoomPct{font-size:12px;color:var(--mute);min-width:36px;text-align:center}
+.focus{display:flex;align-items:center;gap:4px;font-size:13px;flex-wrap:wrap}#focusIn{width:110px}
 .chip{background:var(--sel-chip);color:var(--sel-ink);border-radius:10px;padding:1px 4px 1px 8px;white-space:nowrap}.chip button{border:0;background:none;cursor:pointer;color:var(--sel-ink)}
-#needFocus{position:absolute;inset:0;display:none;align-items:center;justify-content:center;pointer-events:none}#needFocus div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;max-width:380px;font-size:13px;color:var(--mute);pointer-events:auto}
+.opt{display:flex;align-items:center;gap:9px;padding:5px 4px;cursor:pointer}.opt .mute{font-size:13px}
+input.tg{appearance:none;-webkit-appearance:none;width:28px;height:16px;border-radius:8px;background:var(--kbd);position:relative;cursor:pointer;flex:none;border:0;padding:0;margin:0}
+input.tg:checked{background:var(--acc)}input.tg::after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff;transition:left .15s}input.tg:checked::after{left:14px}
+#viewMenu{width:300px;padding:8px 10px}#viewMenu select{width:100%}
+#emptyMsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:5}#emptyMsg div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;max-width:380px;font-size:14px;pointer-events:auto;text-align:center}
+#needFocus{position:absolute;inset:0;display:none;align-items:center;justify-content:center;pointer-events:none}#needFocus div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;max-width:380px;font-size:14px;color:var(--mute);pointer-events:auto}
 body.drop #stage{outline:3px dashed var(--acc);outline-offset:-6px}
-#legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
-#help{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:60;display:flex;align-items:flex-start;justify-content:center;padding-top:6vh}
-#help[hidden]{display:none}
-#help .box{background:var(--panel);border-radius:10px;max-width:620px;max-height:84vh;overflow:auto;padding:18px 24px;font-size:13px;line-height:1.5;position:relative;box-shadow:0 10px 40px rgba(0,0,0,.25)}
-#help h2{margin:0 0 6px;font-size:18px}#help h3{margin:14px 0 4px;font-size:14px}#help ol{padding-left:20px;margin:4px 0}#help li{margin:4px 0}
-#help .close{position:absolute;right:12px;top:12px}#help kbd{border:1px solid var(--kbd);border-radius:3px;padding:0 4px;font-size:11px;background:var(--bg)}
-#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#0f172a;color:#fff;border-radius:8px;padding:8px 14px;font-size:12px;z-index:50;opacity:0;transition:opacity .3s;pointer-events:none;max-width:60vw}
+#help,#palette{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:60;display:flex;align-items:flex-start;justify-content:center;padding-top:6vh}
+#help[hidden],#palette[hidden]{display:none}
+#help .box{background:var(--panel);border-radius:10px;max-width:640px;max-height:86vh;overflow:auto;padding:18px 24px;font-size:14px;line-height:1.5;position:relative;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+#help h2{margin:0 0 6px;font-size:19px}#help h3{margin:16px 0 4px;font-size:15px}#help ol,#help ul{padding-left:20px;margin:4px 0}#help li{margin:4px 0}
+#help .close{position:absolute;right:12px;top:12px}
+#help table{border-collapse:collapse;width:100%}#help td{padding:3px 6px;border-bottom:1px solid var(--soft);vertical-align:top}#help td:first-child{white-space:nowrap;width:150px}
+#palette .box{background:var(--panel);border-radius:10px;width:560px;max-width:92vw;box-shadow:0 10px 40px rgba(0,0,0,.25);overflow:hidden}
+#palIn{width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:12px 14px;font-size:16px;outline:none}
+#palList{max-height:56vh;overflow:auto;padding:4px}
+.pal-i{display:flex;gap:10px;padding:6px 10px;border-radius:6px;cursor:pointer;align-items:baseline}.pal-i.on{background:var(--sel);color:var(--sel-ink)}
+.pal-i .k{font-size:12px;color:var(--mute);width:72px;flex:none}.pal-i .r{margin-left:auto;font-size:12px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#0f172a;color:#fff;border-radius:8px;padding:8px 14px;font-size:13px;z-index:80;opacity:0;transition:opacity .3s;pointer-events:none;max-width:60vw}
 #toast.on{opacity:.95}
-#hint{position:absolute;right:12px;top:12px;background:#0f172a;color:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:12px;max-width:340px;opacity:.9}
-#split{width:6px;margin:0 -3px;cursor:col-resize;z-index:5;flex:none}#split:hover,body.resizing #split{background:var(--acc);opacity:.35}
-body.resizing{cursor:col-resize;user-select:none}
-aside{width:470px;flex:none;border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
-.tabs{display:flex;border-bottom:1px solid var(--line);padding:0 6px}
-.tabs button{border:0;background:none;padding:11px 9px;cursor:pointer;color:var(--mute);border-bottom:2px solid transparent;font:inherit}
-.tabs button.on{color:var(--ink);border-bottom-color:var(--acc)}
-.count{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--chip);font-size:11px;margin-left:3px;text-align:center}
-#panel{flex:1;overflow:auto;padding:14px 16px 40px}
-h4{margin:16px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute)}
-.row{display:flex;gap:6px;margin:6px 0;align-items:center}.row>input,.row>select{flex:1}
-.ins-h{font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.kind{font-size:11px;padding:1px 6px;border-radius:4px;background:var(--chip);color:var(--chip-ink)}
-.anchor{color:var(--mute);margin-top:3px}
-.badge{font-size:11px;padding:1px 6px;border-radius:4px;color:#fff}
-.b-added{background:var(--add)}.b-removed{background:var(--rem)}.b-changed{background:var(--chg)}.b-moved{background:var(--mov)}
-ul.members{list-style:none;margin:0;padding:0}
-ul.members li{display:flex;justify-content:space-between;align-items:center;padding:3px 6px;border-radius:5px}
-ul.members li:hover{background:var(--soft)}
-.x{border:0;background:none;color:var(--mute);cursor:pointer;font-size:15px;line-height:1}.x:hover{color:var(--rem)}
-.mute{color:var(--mute)}
-details{border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:8px 0}
-summary{cursor:pointer;font-weight:600}
-.checks label{display:inline-flex;gap:4px;margin-right:10px;align-items:center}
-.chg{padding:6px 8px;border-radius:6px;cursor:pointer;display:flex;gap:8px}
-.chg:hover{background:var(--soft)}
-.chg .op{font-family:ui-monospace,Menlo,monospace;font-weight:700;width:12px}
-.c-add .op{color:var(--add)}.c-rem .op{color:var(--rem)}.c-chg .op{color:var(--chg)}.c-info{color:var(--mute)}
-.grp{margin-top:12px;font-weight:600}
-pre.dsl{background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;overflow:auto;line-height:1.5;margin:0}
-pre.dsl .p{color:#86efac;background:rgba(22,163,74,.18);display:block}
-pre.dsl .m{color:#fca5a5;background:rgba(220,38,38,.18);display:block}
-.md{font-size:13px}.md h1{font-size:18px}.md h2{font-size:15px;border-bottom:1px solid var(--line);padding-bottom:4px;margin-top:22px}.md h3{font-size:14px;margin:18px 0 6px}
-.md pre{background:var(--soft);padding:8px;border-radius:6px;overflow:auto}.md code{background:var(--soft);padding:0 3px;border-radius:3px}.md pre code{background:none;padding:0}
-.md ul{padding-left:20px}.md li{margin:3px 0}.md blockquote{margin:8px 0;padding:6px 10px;border-left:3px solid var(--chg);background:var(--quote)}
-.md input[type=checkbox]{margin-right:4px}
-pre.raw{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;margin:0}
-.vrow{display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
-.vrow .s{width:18px;font-weight:700}.ok{color:var(--add)}.bad{color:var(--rem)}
-.empty{color:var(--mute);padding:20px 0;text-align:center}
+#hint{position:absolute;right:12px;top:12px;background:#0f172a;color:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;max-width:340px;opacity:.9;z-index:5}
 #handle{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--acc);border:2px solid var(--panel);box-shadow:0 0 0 1px var(--acc),0 2px 6px rgba(0,0,0,.2);cursor:crosshair;display:none;z-index:5}
 #handle:hover{transform:scale(1.25)}
 #pop{position:absolute;display:none;z-index:10;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.2);padding:10px 12px;width:320px}
-#pop .pop-h{margin-bottom:8px;font-size:13px}
-#pop .seg button:disabled{opacity:.35;cursor:default}
+#pop .pop-h{margin-bottom:8px;font-size:14px}
 #edgeAct{position:absolute;display:none;z-index:6;gap:4px}
-#edgeAct .btn{box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:12px;padding:3px 8px}
+#edgeAct .btn{box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:13px;padding:3px 8px}
 body.connect-mode #cy,#cy.connecting{cursor:crosshair}
-.thread{border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0;background:var(--panel)}.thread.resolved{opacity:.6}
-.thread .th-h{display:flex;gap:6px;align-items:center;font-size:12px;margin-bottom:4px}.thread .th-h a{cursor:pointer;color:var(--acc)}
-.msg{font-size:13px;margin:6px 0}.msg .who{font-size:11px;font-weight:600;margin-right:6px}.msg .who.agent{color:var(--agent)}.msg .who.human{color:var(--human)}
-.msg .when{font-size:11px;color:var(--mute)}
-.msg .mk{font-size:10px;padding:0 5px;border-radius:8px;background:var(--soft);color:var(--mute);margin-right:6px}.msg .mk.decision{background:var(--warn-line);color:var(--warn-ink);font-weight:600}
-.msg.decision{border-left:3px solid #f59e0b;padding-left:7px}.choices{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
-.thread.needs-decision{border-color:#f59e0b;box-shadow:0 0 0 1px var(--warn-line)}.wait.fb{background:var(--chip);color:var(--chip-ink)}.msg .body p{margin:2px 0}
-.wait{font-size:11px;border-radius:4px;padding:0 5px}.wait.human{background:var(--warn);color:var(--warn-ink)}.wait.agent{background:var(--agent-bg);color:var(--agent-ink)}
-.cbtn{border:0;background:none;cursor:pointer;font-size:12px;opacity:.35;padding:0 4px}.cbtn:hover,.cbtn.has{opacity:1}
-.collab{font-size:12px;color:var(--mute);margin-bottom:8px}.collab b.on{color:var(--add)}
-.callout{background:var(--sel);border:1px solid var(--sel-line);border-radius:8px;padding:10px;margin-bottom:12px;color:var(--sel-ink)}
 </style>
 </head>
 <body>
 <header>
-  <div class="brand">archplan <span>demo</span></div>
-  <div class="repo mono" id="repo"></div>
-  <div class="seg" id="views">
-    <button data-view="components">Components</button>
-    <button data-view="types">Types</button>
-    <button data-view="seq">Sequence</button>
-    <button data-view="glossary">Glossary</button>
-  </div>
-  <select id="seqSel" style="display:none"></select>
-  <select id="glossMode" style="display:none" title="Glossary layout"><option value="map">Map</option><option value="leaks">Map: leaks only</option><option value="table">Table</option></select>
-  <div class="focus" id="focusBox"><input id="focusIn" list="focusList" placeholder="Focus component…"><datalist id="focusList"></datalist><span id="chips"></span>
-    <select id="seqFilter" title="Show only the components and types a sequence touches"></select>
-    <label class="mute" title="Show third-party components"><input type="checkbox" id="extChk"> external</label>
-    <label class="mute" title="Hide leaves: boxes with at most one incoming line and no outgoing ones, repeated until none are left. Changed, selected and focused boxes stay."><input type="checkbox" id="leafChk"> hide leaves<span id="leafN"></span></label></div>
-  <div class="seg" id="modes">
-    <button data-mode="asis">As-is</button>
-    <button data-mode="tobe">To-be</button>
-    <button data-mode="diff">Diff</button>
-  </div>
+  <div class="brand">archplan</div><span class="proj" id="proj">demo</span><span class="mono" id="repo"></span>
   <div class="spacer"></div>
-  <button class="btn" id="refreshBtn" title="Re-export the as-is model from the code (archplan export)" style="display:none">⟳ From code</button>
-  <button class="btn" id="openBtn" title="Open an archmodel/1 JSON file (or drop one on the page)">Open…</button><input type="file" id="fileIn" accept=".json,application/json" hidden>
-  <button class="btn primary" id="demoBtn">▶ Apply demo edits</button>
-  <button class="btn" id="connectBtn" title="Drag between boxes to connect. Holding Shift does the same.">🔗 Connect</button>
-  <button class="btn" id="undoBtn">Undo</button>
-  <button class="btn" id="resetBtn">Reset</button>
-  <button class="btn" id="layoutBtn">Re-layout</button>
-  <button class="btn" id="themeBtn" title="Theme: follow the system, dark or light">◐</button>
-  <button class="btn" id="helpBtn" title="How archplan works (?)">?</button>
+  <button class="pill agent" id="agentPill" hidden title="What Claude did last"></button>
+  <button class="pill warn" id="sugPill" hidden title="Show the first suggestion"></button>
+  <button class="btn" id="searchBtn" title="Find a component, type, task or action">⌕ Search <span class="kbd">⌘K</span></button>
+  <div class="menu-wrap"><button class="btn" id="shareBtn">Share ▾</button><div class="menu" id="shareMenu" hidden></div></div>
+  <div class="menu-wrap"><button class="btn ico" id="moreBtn" title="More">⋯</button><div class="menu" id="moreMenu" hidden></div></div>
+  <input type="file" id="fileIn" accept=".json,application/json" hidden>
 </header>
 <div id="help" hidden><div class="box">
   <button class="btn close" id="helpClose" title="Close (Esc)">✕</button>
   <h2>archplan</h2>
   <p>Plan an architecture change, then let an agent build it. The <b>as-is</b> model comes from the code. You edit the <b>to-be</b> model. The difference becomes a <b>plan</b>.</p>
+  <h3>The screen</h3>
+  <ul>
+    <li><b>Left: the plan.</b> The intent at the top says what the change should achieve. Below it come the rules, the tasks and the comment threads. A thread about a task sits under that task. The narrow column on the far left jumps to each part.</li>
+    <li><b>Right: the diagram.</b> The toolbar picks the view (<i>Components</i>, <i>Types</i>, <i>Sequences</i>, <i>Glossary</i>) and the mode (<i>As-is</i>, <i>To-be</i>, <i>Diff</i>). <i>Focus</i> narrows the diagram to a few components. <i>View</i> holds the settings that hide or filter things; its number says how many are on. <i>Overlay</i> colours the boxes.</li>
+    <li><b>Item pages.</b> Click a box, a line or a call to open its page on the left. The page shows the details and the edits you can make. Click <i>Plan</i> in the breadcrumb, or press <kbd>Esc</kbd>, to go back.</li>
+    <li><b>Header.</b> The pill shows what Claude did last. <i>Search</i> finds any component, type, task or action. <i>Share</i> copies or downloads the plan, the diagram as D2 and the target model. <i>⋯</i> opens files, exports from the code, resets the target, sets the theme and opens this help.</li>
+  </ul>
   <h3>Start here</h3>
   <ol>
-    <li><b>Look around.</b> Pick a view: <i>Components</i> (packages and their dependencies), <i>Types</i>, <i>Sequence</i> (call flows) or <i>Glossary</i> (the terms each component owns). Type in <i>Focus component…</i> to zoom in on one part. Double-click a box to focus on it. <i>Hide leaves</i> hides boxes with at most one incoming line and no outgoing ones, and then the boxes that only led to them, to show the connections that matter.</li>
-    <li><b>Say what you want.</b> Open the <i>Plan</i> tab and write the intent: what should this change achieve?</li>
-    <li><b>Edit the to-be model.</b> Select an item and change it in the <i>Inspect</i> tab: move a type, rename, forbid a dependency. Drag the blue dot from one box to another to connect them; select a line and press Delete to remove it. <i>Diff</i> shows what you changed.</li>
-    <li><b>Comment.</b> Select an item and write in <i>Comments</i>. Shift-click several items to comment on them together, for example an import cycle.</li>
-    <li><b>Hand over.</b> The <i>Plan</i> tab lists the tasks. Give it to the agent, or let the agent read it directly (below).</li>
+    <li><b>Look around.</b> Pick a view. Type in <i>Focus</i> to zoom in on one part, or double-click a box. <i>Hide leaves</i> (in <i>View</i>) hides boxes with at most one incoming line and no outgoing ones, and then the boxes that only led to them. What is left are the connections that matter.</li>
+    <li><b>Say what you want.</b> Write the intent at the top of the plan.</li>
+    <li><b>Edit the to-be model.</b> Click an item and change it on its page: move a type, rename it, forbid a dependency. Drag the blue dot from one box to another to connect them. Select a line and press <kbd>Delete</kbd> to remove it. To add a type or a package, or to read the model as text, open <i>Edit the model</i> at the end of the plan. <i>Diff</i> shows what you changed.</li>
+    <li><b>Comment.</b> Write on an item's page. Shift-click several items to comment on them together, for example an import cycle. Type <kbd>@</kbd> to link a component, type or task. A comment on a selection keeps a small picture of it. Click the picture to get that view back.</li>
+    <li><b>Hand over.</b> The plan lists the tasks in order. Claude reads it directly. <i>Check against the code</i>, at the end of the plan, shows how the result is verified.</li>
   </ol>
   <h3>Working with Claude</h3>
-  <p>In Claude Code, with the archplan plugin, type <code>/archplan</code> in the repository. Claude sees your comments as you write them and answers in the same thread. An orange <b>decision</b> thread waits for your choice; a <b>feedback</b> thread only needs reading. Claude can propose model changes (you see them in <i>Diff</i>; Undo reverts them). After it changes the code, the model reloads and the plan shrinks.</p>
-  <h3>Keys</h3>
-  <p><kbd>Shift</kbd>-drag connects, <kbd>Shift</kbd>-click selects several, <kbd>Delete</kbd> removes the selection, <kbd>⌘Z</kbd> undoes, <kbd>Esc</kbd> deselects, <kbd>?</kbd> opens this help. The ◐ button switches between the system theme, dark and light.</p>
+  <p>In Claude Code, with the archplan plugin, type <code>/archplan</code> in the repository. Claude sees your comments as you write them and answers in the same thread. An orange <b>decision</b> thread waits for your choice: click an option. A <b>feedback</b> thread only needs reading.</p>
+  <p>When Claude proposes a change to the target, it arrives as a <b>suggestion</b>. Its card lists each change. Untick the ones you do not want, then accept or reject. The card says how the plan would grow or shrink. <i>With suggestion</i> in the mode switch shows the change in the diagram, with new items dashed green. A change Claude makes directly shows in <i>Diff</i>, and Undo reverts it. After Claude changes the code, the model reloads and the plan shrinks.</p>
+  <h3>Overlays</h3>
+  <p><i>Change frequency</i> colours each component by the number of commits that touched it in the last year. <i>Co-change</i> draws a purple dashed line between components that often change in the same commit. A thick line means there is no dependency between them: hidden coupling. <i>Fan-in</i> and <i>fan-out</i> colour components by how many others use them, or how many they use. The first two need git. Overlays work in the Components view.</p>
+  <h3 id="keys">Keyboard shortcuts</h3>
+  <table>
+    <tr><td><kbd>⌘K</kbd></td><td>Search components, types, tasks and actions</td></tr>
+    <tr><td><kbd>1</kbd> to <kbd>4</kbd></td><td>Components, Types, Sequences, Glossary</td></tr>
+    <tr><td><kbd>F</kbd></td><td>Focus on the selected component</td></tr>
+    <tr><td><kbd>L</kbd></td><td>Hide or show leaves</td></tr>
+    <tr><td><kbd>Shift</kbd>-drag</td><td>Connect two boxes</td></tr>
+    <tr><td><kbd>Shift</kbd>-click</td><td>Select several items</td></tr>
+    <tr><td><kbd>Delete</kbd></td><td>Remove the selection from the target</td></tr>
+    <tr><td><kbd>⌘Z</kbd></td><td>Undo</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Deselect and go back to the plan</td></tr>
+    <tr><td><kbd>@</kbd> in a comment</td><td>Link a component, type or task</td></tr>
+    <tr><td><kbd>⌘Enter</kbd> in a comment</td><td>Send it</td></tr>
+    <tr><td><kbd>?</kbd></td><td>This help</td></tr>
+  </table>
   <p class="mute">Everything is saved in <code>.archplan/</code> in the repository. Commit it to share the plan and the threads.</p>
 </div></div>
+<div id="palette" hidden><div class="box"><input id="palIn" placeholder="Find a component, type, task or action" autocomplete="off"><div id="palList"></div></div></div>
+<div id="ac" hidden></div>
 <main>
-  <section id="stage">
-    <div id="cy"></div>
-    <div id="seq"></div>
-    <div id="gloss"></div>
-    <div id="legend"></div>
-    <div id="needFocus"><div></div></div>
-    <div id="handle" title="Drag to connect"></div>
-    <div id="edgeAct"></div>
-    <div id="pop"></div>
-    <div id="toast"></div><div id="hint">Drag the blue dot on a box to another box to connect them. Select a line and press Delete to disconnect. In Sequence, drag from one lifeline to another to add a call, and drag a call up or down to reorder. The plan updates live.</div>
-  </section>
+  <nav id="outline"></nav>
+  <aside id="doc"><div id="panel"></div></aside>
   <div id="split" title="Drag to resize; double-click to reset"></div>
-  <aside>
-    <div class="tabs" id="tabs"></div>
-    <div id="panel"></div>
-  </aside>
+  <section id="stage">
+    <div id="toolbar">
+      <div class="seg" id="views">
+        <button data-view="components">Components</button>
+        <button data-view="types">Types</button>
+        <button data-view="seq">Sequences</button>
+        <button data-view="glossary">Glossary</button>
+      </div>
+      <div class="seg" id="modes">
+        <button data-mode="asis">As-is</button>
+        <button data-mode="tobe">To-be</button>
+        <button data-mode="diff">Diff</button>
+        <button data-mode="sugg" id="suggMode" hidden title="The target with the pending suggestion applied">With suggestion</button>
+      </div>
+      <select id="seqSel" style="display:none;max-width:240px" title="Sequence"></select>
+      <button class="btn" id="seqInfo" style="display:none" title="Edit this sequence: add calls and participants">Sequence page</button>
+      <div class="focus" id="focusBox"><input id="focusIn" list="focusList" placeholder="⌖ Focus…"><datalist id="focusList"></datalist><span id="chips"></span></div>
+      <div class="menu-wrap"><button class="btn" id="viewBtn" title="What the diagram shows">View ▾</button>
+        <div class="menu left" id="viewMenu" hidden>
+          <div class="mh">Show</div>
+          <label class="opt" id="leafOpt" title="Hide leaves: boxes with at most one incoming line and no outgoing ones, repeated until none are left. Changed, selected and focused boxes stay."><input type="checkbox" class="tg" id="leafChk">Hide leaves<span class="mute" id="leafN"></span></label>
+          <label class="opt" id="extOpt" title="Show third-party components"><input type="checkbox" class="tg" id="extChk">External libraries</label>
+          <div id="seqFilterBox"><div class="mh">Only what a sequence touches</div><select id="seqFilter" title="Show only the components and types a sequence touches"></select></div>
+          <div id="glossBox"><div class="mh">Glossary layout</div><select id="glossMode" title="Glossary layout"><option value="map">Map</option><option value="leaks">Map: leaks only</option><option value="table">Table</option></select></div>
+          <div class="row" style="margin-top:10px"><span class="spacer"></span><button class="linkb" id="viewReset">Reset all</button></div>
+        </div></div>
+      <div class="menu-wrap"><button class="btn" id="ovBtn" title="Colour the boxes">Overlay: none ▾</button><div class="menu left" id="ovMenu" hidden></div></div>
+    </div>
+    <div id="canvas">
+      <div id="cy"></div>
+      <div id="seq"></div>
+      <div id="gloss"></div>
+      <div id="legend"></div>
+      <div id="ovLegend" hidden></div>
+      <div id="needFocus"><div></div></div>
+      <div id="emptyMsg" hidden><div></div></div>
+      <div id="handle" title="Drag to connect"></div>
+      <div id="edgeAct"></div>
+      <div id="pop"></div>
+      <div id="canvasBar">
+        <button class="tb" id="undoBtn" title="Undo (⌘Z)">↶ Undo</button>
+        <button class="tb" id="connectBtn" title="Drag between boxes to connect. Holding Shift does the same.">⤳ Connect</button>
+        <button class="tb" id="layoutBtn" title="Lay out the diagram again">⟲ Re-layout</button>
+        <button class="tb" id="fitBtn" title="Fit the diagram">⤢ Fit</button>
+        <button class="tb" id="zoomOut" title="Zoom out">−</button><span id="zoomPct">100%</span><button class="tb" id="zoomIn" title="Zoom in">+</button>
+        <button class="tb" id="legendBtn" title="Show or hide the legend">◫ Legend</button>
+      </div>
+      <div id="hint">Drag the blue dot on a box to another box to connect them. Select a line and press Delete to disconnect. In Sequences, drag from one lifeline to another to add a call, and drag a call up or down to reorder. The plan updates live.</div>
+    </div>
+  </section>
 </main>
+<div id="toast"></div>
 <script>
 // ---------- helpers ----------
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -320,11 +454,11 @@ let toBe = clone(SAMPLE);
 let focus = new Set(), showExternal = false, seqFilter = '', glossMode = 'map';
 let hideLeaves = localStorage.getItem('archplan.hideLeaves') === '1';
 let undoStack = [];
-let view = 'types', mode = 'diff', tab = 'inspect', curSeq = 'PlaceOrder';
+let view = 'types', mode = 'diff', page = 'plan', curSeq = 'PlaceOrder';
 let sel = null;
 let positions = {components: {}, types: {}, glossary: {}};
 let viewports = {};
-let planFmt = 'rendered', modelFmt = 'diff', verifyStage = 0;
+let modelFmt = 'diff', verifyStage = 0;
 const SAMPLE_INTENT = 'Decouple the order domain from infrastructure, make notifications non-blocking, and persist orders before charging.';
 let intent = SAMPLE_INTENT;
 
@@ -364,12 +498,12 @@ async function api(method, path, body) {
   return r.json();
 }
 const nowStamp = () => new Date().toISOString().replace(/\.\d+Z$/, 'Z');
-async function addThread(key, text, author = 'human') {
+async function addThread(key, text, author = 'human', snapshot) {
   if (!text) return;
   const label = anchorLabel(key);
-  if (collab) { await api('POST', '/api/threads', {anchor: key, label, text, author}); return syncThreads(); }
+  if (collab) { await api('POST', '/api/threads', {anchor: key, label, text, author, ...(snapshot ? {snapshot} : {})}); return syncThreads(); }
   const at = nowStamp();
-  threads.push({id: 'th-' + Math.random().toString(36).slice(2, 10), anchor: key, label, status: 'open', created: at, updated: at, messages: [{author, text, at}]});
+  threads.push({id: 'th-' + Math.random().toString(36).slice(2, 10), anchor: key, label, status: 'open', created: at, updated: at, messages: [{author, text, at}], ...(snapshot ? {snapshot} : {})});
   onThreads(true);
 }
 async function replyThread(id, text, status) {
@@ -397,7 +531,9 @@ async function pollThreads() {
       pollKey = d.key;
       if (d.version !== threadsVer) { const was = markers(); threadsVer = d.version; threads = d.threads; onThreads(markers() !== was); }
       if (d.model_etag && d.model_etag !== known.modelEtag) { known.modelEtag = d.model_etag; await reloadAsIs(); }
-      if (d.target_rev > known.targetRev) { known.targetRev = d.target_rev; await reloadTarget(d.target_by); }
+      if (d.target_rev > known.targetRev) { known.targetRev = d.target_rev; await reloadTarget(d.target_by); refreshPreviews(); }
+      if (d.suggestions_version !== known.sugVer) { known.sugVer = d.suggestions_version; loadSuggestions(); }
+      if (d.activity_etag !== known.actEtag) { known.actEtag = d.activity_etag; loadActivity(); }
     } catch { await new Promise(r => setTimeout(r, 3000)); }
   }
 }
@@ -823,7 +959,7 @@ function applyDemo() {
   for (const [k, v] of [['type:PaymentClient', 'Charge must be idempotent. Use the order ID as idempotency key?'],
     ['msg:PlaceOrder:m5', 'Is fire-and-forget acceptable, or do we need an outbox for at-least-once delivery?']])
     if (!threads.some(t => t.anchor === k && t.messages[0].text === v)) addThread(k, v);
-  mode = 'diff'; sel = null; verifyStage = 0; tab = 'plan';
+  mode = 'diff'; sel = null; multi = []; verifyStage = 0; page = 'plan';
   positions = {components: {}, types: {}, glossary: {}}; viewports = {};
   render();
 }
@@ -893,6 +1029,12 @@ func TestForbiddenImports(t *testing.T) {
   return {phase: 5, title: 'Add architecture tests', files: ['internal/archtest/imports_test.go (new)'],
     steps: [{text: 'Add a test that fails on forbidden imports:', code}, 'Run it in CI.'], deps, why,
     acceptance: [q('go test ./internal/archtest/...') + ' passes.']};
+}
+// The plan task an anchor belongs to, from the task keys in byKey.
+function taskOfAnchor(k, a, b, byKey) {
+  const [kind, ...r] = k.split(':'), x = r.join(':');
+  if (kind === 'concept') { const o = (b.vocabulary?.concepts?.[x] || a.vocabulary?.concepts?.[x])?.owner; return byKey['glossary:' + o]; }
+  return kind === 'msg' ? byKey['seq:' + r[0]] : kind === 'task' || kind === 'step' ? byKey[x.split('#')[0]] : kind === 'cedge' ? byKey['dep:' + x] : byKey[kind + ':' + x];
 }
 function buildPlan(a, b, D) {
   const tasks = [], byKey = {};
@@ -1076,11 +1218,7 @@ function buildPlan(a, b, D) {
   }
 
   const openQ = [];
-  const taskOf = k => {
-    const [kind, ...r] = k.split(':'), x = r.join(':');
-    if (kind === 'concept') { const o = (b.vocabulary?.concepts?.[x] || a.vocabulary?.concepts?.[x])?.owner; return byKey['glossary:' + o]; }
-    return kind === 'msg' ? byKey['seq:' + r[0]] : kind === 'task' || kind === 'step' ? byKey[x.split('#')[0]] : kind === 'cedge' ? byKey['dep:' + x] : byKey[kind + ':' + x];
-  };
+  const taskOf = k => taskOfAnchor(k, a, b, byKey);
   for (const th of threads.filter(t => t.status === 'open')) {
     const tk = taskOf(th.anchor), last = th.messages[th.messages.length - 1];
     const text = th.messages[0].text + (th.messages.length > 1 ? ` (latest, ${last.author}: ${last.text})` : '');
@@ -1100,6 +1238,23 @@ function buildPlan(a, b, D) {
   return {tasks: out, openQ, warnings};
 }
 
+// One task's body as Markdown lines, without its heading.
+function taskMD(t, P) {
+  const lines = [];
+  if (t.why.length) lines.push(`**Why:** ${t.why.join(' ')}`, '');
+  lines.push(`**Depends on:** ${t.deps.size ? [...t.deps].map(d => P.tasks.find(x => x.key === d).id).join(', ') : 'none'}`, '');
+  if (t.files.length) lines.push(`**Files:** ${t.files.map(q).join(', ')}`, '');
+  lines.push('**Steps:**', '');
+  t.steps.forEach(s => {
+    if (typeof s === 'string') lines.push(`- [ ] ${s}`);
+    else lines.push(`- [ ] ${s.text}`, '', '  ' + FENCE + (s.lang || 'go'), ...s.code.split('\n').map(l => '  ' + l), '  ' + FENCE, '');
+  });
+  lines.push('');
+  if (t.blast.length) lines.push(`**Blast radius (as-is):** ${t.blast.join('; ')}`, '');
+  if (t.questions.length) lines.push(`**Resolve first:** ${t.questions.join(' ')}`, '');
+  lines.push('**Acceptance:**', '', ...t.acceptance.map(x => `- [ ] ${x}`), '');
+  return lines;
+}
 function planMD(P) {
   const lines = [`# Change plan: ${META.repo}`, '', `**Intent:** ${intent || "(not stated)"}`, '',
     `**Base:** ${q(META.repo + '@' + META.commit)} (as-is extraction). **Target:** ${q('arch/target.archmodel.json')}. **Tasks:** ${P.tasks.length}.`, ''];
@@ -1110,21 +1265,7 @@ function planMD(P) {
     lines.push('');
   }
   lines.push('## Tasks', '');
-  for (const t of P.tasks) {
-    lines.push(`### ${t.id}. ${t.title}`, '');
-    if (t.why.length) lines.push(`**Why:** ${t.why.join(' ')}`, '');
-    lines.push(`**Depends on:** ${t.deps.size ? [...t.deps].map(d => P.tasks.find(x => x.key === d).id).join(', ') : 'none'}`, '');
-    if (t.files.length) lines.push(`**Files:** ${t.files.map(q).join(', ')}`, '');
-    lines.push('**Steps:**', '');
-    t.steps.forEach(s => {
-      if (typeof s === 'string') lines.push(`- [ ] ${s}`);
-      else lines.push(`- [ ] ${s.text}`, '', '  ' + FENCE + (s.lang || 'go'), ...s.code.split('\n').map(l => '  ' + l), '  ' + FENCE, '');
-    });
-    lines.push('');
-    if (t.blast.length) lines.push(`**Blast radius (as-is):** ${t.blast.join('; ')}`, '');
-    if (t.questions.length) lines.push(`**Resolve first:** ${t.questions.join(' ')}`, '');
-    lines.push('**Acceptance:**', '', ...t.acceptance.map(x => `- [ ] ${x}`), '');
-  }
+  for (const t of P.tasks) lines.push(`### ${t.id}. ${t.title}`, '', ...taskMD(t, P));
   lines.push('## Verification', '', `After the last task, run ${q('archplan verify arch/target.archmodel.json')}. It re-extracts the model from the code and must report zero remaining differences.`, '');
   return lines.join('\n');
 }
@@ -1346,30 +1487,30 @@ const COL = {'': '#334155', added: '#16a34a', removed: '#dc2626', changed: '#d97
 const cy = cytoscape({
   container: $('cy'), wheelSensitivity: 0.25, minZoom: 0.2, maxZoom: 2.5,
   style: [
-    {selector: 'node', style: {'label': 'data(label)', 'text-wrap': 'wrap', 'text-max-width': 1000, 'font-size': 11, 'color': '#0f172a', 'text-valign': 'center', 'text-halign': 'center'}},
+    {selector: 'node', style: {'label': 'data(label)', 'text-wrap': 'wrap', 'text-max-width': 1000, 'font-size': 12, 'color': '#0f172a', 'text-valign': 'center', 'text-halign': 'center'}},
     {selector: 'node.typ', style: {'shape': 'rectangle', 'width': 'data(w)', 'height': 'data(h)', 'background-color': '#fff', 'border-width': 1.5, 'border-color': '#334155',
       'font-family': 'ui-monospace, Menlo, monospace', 'text-justification': 'left', 'line-height': 1.3}},
     {selector: 'node.typ[kind="interface"]', style: {'background-color': '#f5f3ff'}},
-    {selector: 'node.par', style: {'shape': 'round-rectangle', 'label': 'data(label)', 'text-valign': 'top', 'text-halign': 'center', 'font-weight': 600, 'font-size': 12,
+    {selector: 'node.par', style: {'shape': 'round-rectangle', 'label': 'data(label)', 'text-valign': 'top', 'text-halign': 'center', 'font-weight': 600, 'font-size': 13,
       'padding': 16, 'background-color': '#f8fafc', 'border-color': '#cbd5e1', 'border-width': 1, 'color': '#334155', 'text-margin-y': -4}},
-    {selector: 'node.cmp', style: {'shape': 'round-rectangle', 'width': 170, 'height': 58, 'border-width': 1.5, 'border-color': '#334155', 'font-size': 12, 'line-height': 1.35}},
-    {selector: 'node.cmp.leaky', style: {'height': 74}},
+    {selector: 'node.cmp', style: {'shape': 'round-rectangle', 'width': 184, 'height': 62, 'border-width': 1.5, 'border-color': '#334155', 'font-size': 13, 'line-height': 1.35}},
+    {selector: 'node.cmp.leaky', style: {'height': 80}},
     {selector: 'node.cmp, node.par', style: {'background-color': 'data(bg)'}},
     {selector: 'node.par', style: {'background-opacity': 0.45}},
     {selector: 'node.ctx', style: {'opacity': 0.45}},
     {selector: 'node.ext', style: {'border-style': 'dashed'}},
     {selector: 'edge', style: {'curve-style': 'bezier', 'width': 1.4, 'line-color': '#94a3b8', 'target-arrow-color': '#94a3b8', 'source-arrow-color': '#94a3b8',
-      'target-arrow-shape': 'vee', 'label': 'data(label)', 'font-size': 9, 'color': '#475569', 'text-background-color': '#fff', 'text-background-opacity': 1, 'text-background-padding': 2}},
+      'target-arrow-shape': 'vee', 'label': 'data(label)', 'font-size': 10, 'color': '#475569', 'text-background-color': '#fff', 'text-background-opacity': 1, 'text-background-padding': 2}},
     {selector: 'edge[kind="has"]', style: {'source-arrow-shape': 'diamond'}},
     {selector: 'edge[kind="implements"]', style: {'line-style': 'dashed', 'target-arrow-shape': 'triangle', 'target-arrow-fill': 'hollow'}},
     {selector: 'edge[kind="uses"]', style: {'line-style': 'dotted'}},
-    {selector: 'edge.cdep', style: {'width': 2, 'line-color': '#64748b', 'target-arrow-color': '#64748b', 'font-size': 10}},
+    {selector: 'edge.cdep', style: {'width': 2, 'line-color': '#64748b', 'target-arrow-color': '#64748b', 'font-size': 11}},
     {selector: 'edge.violation', style: {'line-color': '#dc2626', 'target-arrow-color': '#dc2626', 'width': 3, 'color': '#dc2626'}},
     {selector: 'edge.rule', style: {'line-style': 'dotted', 'line-color': '#f87171', 'target-arrow-color': '#f87171', 'target-arrow-shape': 'tee', 'color': '#dc2626', 'width': 1.5}},
-    {selector: 'node.cpt', style: {'shape': 'round-tag', 'width': 'label', 'height': 'label', 'padding': 8, 'background-color': '#fff', 'border-width': 1.5, 'border-color': '#334155', 'font-size': 11}},
+    {selector: 'node.cpt', style: {'shape': 'round-tag', 'width': 'label', 'height': 'label', 'padding': 8, 'background-color': '#fff', 'border-width': 1.5, 'border-color': '#334155', 'font-size': 12}},
     {selector: 'node.cpt[kind="vendor"]', style: {'background-color': '#f1f5f9'}},
     {selector: 'node.cpt[kind="technical"]', style: {'background-color': '#f5f3ff'}},
-    {selector: 'edge.gu', style: {'width': 1.5, 'font-size': 10, 'target-arrow-shape': 'triangle'}},
+    {selector: 'edge.gu', style: {'width': 1.5, 'font-size': 11, 'target-arrow-shape': 'triangle'}},
     {selector: 'edge.gu.decl', style: {'line-style': 'dotted'}},
     {selector: 'edge.gu.leak', style: {'line-color': '#dc2626', 'target-arrow-color': '#dc2626', 'color': '#dc2626', 'width': 2.5}},
     {selector: 'node.added', style: {'border-color': '#16a34a', 'border-width': 3}},
@@ -1384,6 +1525,14 @@ const cy = cytoscape({
     {selector: 'node.droptarget', style: {'overlay-color': '#16a34a', 'overlay-opacity': 0.22, 'overlay-padding': 8}},
     {selector: 'node.ghost', style: {'width': 1, 'height': 1, 'opacity': 0, 'label': ''}},
     {selector: 'edge.tmp', style: {'line-color': '#2563eb', 'target-arrow-color': '#2563eb', 'line-style': 'dashed', 'width': 2, 'label': '', 'source-arrow-shape': 'none'}},
+    {selector: 'edge.cochange', style: {'curve-style': 'unbundled-bezier', 'control-point-distances': 30, 'line-color': '#7c3aed', 'line-style': 'dashed', 'line-dash-pattern': [6, 4], 'width': 'data(w)', 'opacity': 0.55,
+      'target-arrow-shape': 'none', 'source-arrow-shape': 'none', 'label': 'data(label)', 'font-size': 10, 'color': '#6d28d9', 'text-background-color': '#fff', 'text-background-opacity': 0.8, 'text-background-padding': 1}},
+    {selector: 'edge.cochange.nodep', style: {'opacity': 0.95, 'font-weight': 700}},
+    {selector: 'node.sugg', style: {'border-color': '#16a34a', 'border-style': 'dashed', 'border-width': 3}},
+    {selector: 'node.sugg.removed', style: {'border-color': '#dc2626'}},
+    {selector: 'edge.sugg', style: {'line-color': '#16a34a', 'target-arrow-color': '#16a34a', 'line-style': 'dashed', 'width': 3}},
+    {selector: 'edge.sugg.removed', style: {'line-color': '#dc2626', 'target-arrow-color': '#dc2626'}},
+    {selector: '.hl', style: {'overlay-color': '#7c3aed', 'overlay-opacity': 0.25, 'overlay-padding': 9}},
   ],
 });
 
@@ -1415,7 +1564,7 @@ function typeLabel(id) {
   const all = [...lines];
   if (F_.length) all.push(div, ...F_.map(trunc));
   if (M_.length) all.push(div, ...M_.map(trunc));
-  return {label: all.join('\n'), w: Math.min(width, 46) * 6.8 + 22, h: all.length * 11 * 1.3 + 16};
+  return {label: all.join('\n'), w: Math.min(width, 46) * 7.4 + 24, h: all.length * 12 * 1.3 + 16};
 }
 
 function typeEls() {
@@ -1453,7 +1602,7 @@ function compEls() {
       classes: 'cmp ' + (mode === 'diff' ? (D.comp[id] || '') : '') + (vis.ctx.has(id) ? ' ctx' : '') + (c.kind === 'external' ? ' ext' : '') + (lk ? ' leaky' : '')});
   }
   const live = compEdges(M);
-  const sparse = !focus.size && !seqFilter && vis.ids.size > BIG_COMPS;
+  const sparse = compEls.sparse = !focus.size && !seqFilter && vis.ids.size > BIG_COMPS;
   const calls = seqFilter ? seqScope(seqFilter).calls : new Map();
   for (const e of viewCompEdges().values()) {
     if (!vis.ids.has(e.from) || !vis.ids.has(e.to)) continue;
@@ -1610,7 +1759,7 @@ function endConnect(ev) {
 
 // popover shown after a connect gesture
 function showPop(ev) {
-  const pop = $('pop'), r = $('stage').getBoundingClientRect();
+  const pop = $('pop'), r = $('canvas').getBoundingClientRect();
   renderPop();
   pop.style.display = 'block';
   pop.style.left = Math.max(8, Math.min(ev.clientX - r.left + 10, r.width - 330)) + 'px';
@@ -1764,39 +1913,38 @@ function deleteSelection() {
   else if (sel.kind === 'concept' && concept(toBe, sel.id)) actions['concept.del']();
 }
 const showHelp = on => { $('help').hidden = !on; if (!on) localStorage.setItem('archplan.helpSeen', '1'); };
-$('helpBtn').addEventListener('click', () => showHelp(true));
 // Theme: 'auto' follows the system; the choice is kept per browser.
 const darkMq = matchMedia('(prefers-color-scheme: dark)');
 function applyTheme() {
   const t = localStorage.getItem('archplan.theme') || 'auto';
   document.documentElement.dataset.theme = t === 'auto' ? (darkMq.matches ? 'dark' : 'light') : t;
-  $('themeBtn').textContent = {auto: '◐', dark: '☾', light: '☀'}[t];
-  $('themeBtn').title = `Theme: ${t === 'auto' ? 'follows the system' : t} (click to change)`;
 }
-$('themeBtn').addEventListener('click', () => {
-  const order = ['auto', 'dark', 'light'], t = localStorage.getItem('archplan.theme') || 'auto';
-  localStorage.setItem('archplan.theme', order[(order.indexOf(t) + 1) % 3]);
-  applyTheme();
-});
 darkMq.addEventListener('change', applyTheme);
 applyTheme();
 $('helpClose').addEventListener('click', () => showHelp(false));
 $('help').addEventListener('click', ev => { if (ev.target.id === 'help') showHelp(false); });
 document.addEventListener('keydown', ev => {
   if (!$('help').hidden && ev.key === 'Escape') return showHelp(false);
+  if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') { ev.preventDefault(); return $('palette').hidden ? palOpen() : palClose(); }
+  if (!$('palette').hidden) return;
+  if (ev.key === 'Escape' && [...document.querySelectorAll('.menu')].some(m => !m.hidden)) return closeMenus();
   if (ev.key === '?' && !ev.target.closest?.('input, textarea, select')) return showHelp($('help').hidden);
   if (ev.key === 'Shift') { shiftDown = true; cy.autoungrabify(true); document.body.classList.add('connect-mode'); }
   if (ev.target.closest?.('input, textarea, select')) return;
-  if (ev.key === 'Escape') { closePop(); select(null); }
+  if (ev.key === 'Escape') { closePop(); acHide(); sel = null; multi = []; page = 'plan'; render(); return; }
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) { if (ev.key === 'z') { ev.preventDefault(); $('undoBtn').click(); } return; }
+  const V = {1: 'components', 2: 'types', 3: 'seq', 4: 'glossary'}[ev.key];
+  if (V) { view = V; if (sel?.kind === 'msg' !== (V === 'seq')) sel = null; return render(); }
+  if (ev.key === 'l' || ev.key === 'L') return setLeaves(!hideLeaves);
+  if ((ev.key === 'f' || ev.key === 'F') && sel?.kind === 'comp') { focus.add(sel.id); positions = {components: {}, types: {}, glossary: {}}; viewports = {}; return render(true); }
   if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel) { ev.preventDefault(); deleteSelection(); }
-  if ((ev.metaKey || ev.ctrlKey) && ev.key === 'z') { ev.preventDefault(); $('undoBtn').click(); }
 });
 const shiftOff = () => { shiftDown = false; cy.autoungrabify(connectMode); document.body.classList.toggle('connect-mode', connectMode); };
 document.addEventListener('keyup', ev => { if (ev.key === 'Shift') shiftOff(); });
 window.addEventListener('blur', shiftOff);
 $('connectBtn').addEventListener('click', () => {
   connectMode = !connectMode;
-  $('connectBtn').classList.toggle('primary', connectMode);
+  $('connectBtn').classList.toggle('on', connectMode);
   cy.autoungrabify(connectMode);
   document.body.classList.toggle('connect-mode', connectMode);
 });
@@ -1846,27 +1994,37 @@ function glossEls() {
 }
 // ---------- resizable side panel ----------
 {
-  const side = document.querySelector('aside'), clamp = w => Math.max(320, Math.min(w, innerWidth - 320));
+  const side = $('doc'), clamp = w => Math.max(340, Math.min(w, innerWidth - 420));
   const setW = w => { side.style.width = clamp(w) + 'px'; cy.resize(); if (view === 'seq') renderSeq(); };
   const saved = +localStorage.getItem('archplan.sideWidth'); if (saved) side.style.width = clamp(saved) + 'px';
   $('split').addEventListener('mousedown', ev => {
     ev.preventDefault(); document.body.classList.add('resizing');
-    const move = e => setW(innerWidth - e.clientX);
+    const move = e => setW(e.clientX - side.getBoundingClientRect().left);
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', () => { window.removeEventListener('mousemove', move); document.body.classList.remove('resizing'); localStorage.setItem('archplan.sideWidth', parseInt(side.style.width)); }, {once: true});
   });
   $('split').addEventListener('dblclick', () => { localStorage.removeItem('archplan.sideWidth'); side.style.width = ''; cy.resize(); if (view === 'seq') renderSeq(); });
 }
-function renderCy(forceLayout) {
+// The diagram, with the overlay and, in "With suggestion" mode, the suggested target.
+function renderCy(forceLayout) { withSugg(() => { renderCy0(forceLayout); applyOverlay(); }); markSugg(); renderOverlayUI(); renderCanvasBar(); }
+function renderCy0(forceLayout) {
   cy.resize();
   hideHandle(); handleNode = null;
   cy.elements().remove();
+  compEls.sparse = false;
   cy.add(view === 'types' ? typeEls() : view === 'glossary' ? glossEls() : compEls());
+  const before = cy.nodes().filter(n => !n.isParent()).length;
+  // Co-change lines count as drawn lines, so hiding leaves keeps their ends;
+  // the layout ignores them.
+  addCochange();
   dropLeaves();
+  const cc = cy.edges('.cochange').remove();
   placeNodes(forceLayout);
+  cc.restore();
+  emptyState(before);
   applySel();
   const vp = viewports[view];
-  if (vp) { cy.zoom(vp.zoom); cy.pan(vp.pan); } else cy.fit(undefined, 40);
+  if (vp) { cy.zoom(vp.zoom); cy.pan(vp.pan); } else { cy.fit(undefined, 40); if (cy.zoom() > 1.25) { cy.zoom(1.25); cy.center(); } }
 }
 // A leaf has at most one incoming line and no outgoing ones. Leaves, and the
 // branches made of them, are rarely an architecture problem, so hiding them
@@ -1880,10 +2038,17 @@ function dropLeaves() {
     // matter, and the toggle declutters what you see.
     const sk = view === 'types' ? 'type' : 'comp';
     // Both ends of a changed, violating or forbidden line stay, so the line does.
-    const marked = cy.edges('.added, .removed, .changed, .moved, .violation, .rule').connectedNodes();
+    const marked = cy.edges('.added, .removed, .changed, .moved, .violation, .rule, .cochange').connectedNodes();
+    // The large component view draws only a few lines; count the lines it
+    // leaves out too, or every box would look like a leaf.
+    let ins = x => x.incomers('node').filter(y => y !== x).length, outs = x => x.outgoers('node').filter(y => y !== x).length;
+    if (view === 'components' && compEls.sparse) {
+      const I = {}, O = {}, on = id => cy.getElementById('c:' + id).length;
+      for (const e of viewCompEdges().values()) if (e.from !== e.to) { (I[e.to] ||= []).push(e.from); (O[e.from] ||= []).push(e.to); }
+      ins = x => (I[x.data('sid')] || []).filter(on).length; outs = x => (O[x.data('sid')] || []).filter(on).length;
+    }
     // Repeat, so a branch that hangs off the graph by one line goes as a whole.
-    const isLeaf = x => x.data('sk') === sk && x.isChildless() && !keep(x) && !marked.has(x)
-      && x.incomers('node').filter(y => y !== x).length <= 1 && !x.outgoers('node').filter(y => y !== x).length;
+    const isLeaf = x => x.data('sk') === sk && x.isChildless() && !keep(x) && !marked.has(x) && ins(x) <= 1 && !outs(x);
     for (let leaves = cy.nodes().filter(isLeaf); leaves.length; leaves = cy.nodes().filter(isLeaf)) {
       n += leaves.length;
       cy.remove(leaves);
@@ -1891,13 +2056,30 @@ function dropLeaves() {
     if (view === 'types') cy.remove(cy.nodes('.par').filter(x => x.isChildless()));
   }
   $('leafN').textContent = n ? ` (${n})` : '';
+  dropLeaves.n = n;
 }
+// The diagram is empty because of a filter: say which, and offer to turn it off.
+function emptyState(before) {
+  const left = cy.nodes().filter(n => !n.isParent()).length, el = $('emptyMsg');
+  let msg = '', btn = '';
+  if (!left && before && hideLeaves && dropLeaves.n) { msg = `Hide leaves removed all ${before} ${before === 1 ? 'box' : 'boxes'}.`; btn = 'Show leaves'; }
+  else if (!left && seqFilter) { msg = 'No box here takes part in the chosen sequence.'; btn = 'Show all sequences'; }
+  else if (!left && focus.size) { msg = 'Nothing to show for this focus in this mode.'; btn = 'Clear the focus'; }
+  el.hidden = !msg;
+  if (msg) el.firstElementChild.innerHTML = `${esc(msg)}<div style="margin-top:8px"><button class="btn primary" id="emptyFix">${btn}</button></div>`;
+}
+$('emptyMsg').addEventListener('click', e => {
+  if (e.target.id !== 'emptyFix') return;
+  if (hideLeaves && dropLeaves.n) return setLeaves(false);
+  if (seqFilter) { seqFilter = ''; positions = {components: {}, types: {}, glossary: {}}; viewports = {}; return render(true); }
+  setFocusIds([]); render(true);
+});
 function applySel() {
   cy.elements().removeClass('sel msel');
   const mp = {type: 't:', comp: 'c:', tedge: 'e:', cedge: 'ce:', concept: 'k:'};
   for (const a of multi) { const [k, ...r] = a.split(':'), id = r.join(':'); if (mp[k]) { cy.getElementById(mp[k] + id).addClass('msel'); if (k === 'cedge') cy.getElementById('r:' + id).addClass('msel'); } }
   if (!sel) return;
-  const pre = {type: 't:', comp: 'c:', tedge: 'e:', cedge: 'ce:', concept: 'k:'}[sel.kind];
+  const pre = {type: 't:', comp: 'c:', tedge: 'e:', cedge: 'ce:', concept: 'k:', pair: 'cc:'}[sel.kind];
   if (pre) { cy.getElementById(pre + sel.id).addClass('sel'); if (sel.kind === 'cedge') cy.getElementById('r:' + sel.id).addClass('sel'); }
   showEdgeAct();
 }
@@ -1921,9 +2103,10 @@ function seqData() {
   });
   return {parts, msgs};
 }
-function renderSeq() {
+function renderSeq() { withSugg(renderSeq0); }
+function renderSeq0() {
   const {parts, msgs} = seqData();
-  const colW = 185, x0 = 120, top = 24, hdrH = 44, rowH = msgs.length > 40 ? 30 : 50, y0 = top + hdrH + 40;
+  const colW = 196, x0 = 124, top = 24, hdrH = 44, rowH = msgs.length > 40 ? 30 : 50, y0 = top + hdrH + 40;
   const W = x0 + (parts.length - 1) * colW + 140, H = y0 + msgs.length * rowH + 30;
   const px = {}; parts.forEach((p, i) => px[p.id] = x0 + i * colW);
   const M = mode === 'asis' ? asIs : toBe, nm = id => pname(M, id), cm = id => psub(M, id);
@@ -1934,15 +2117,15 @@ function renderSeq() {
     s += `<marker id="f-${n}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0L10,5L0,10z" fill="${c}"/></marker>`;
     s += `<marker id="o-${n}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0L10,5L0,10" fill="none" stroke="${c}" stroke-width="1.6"/></marker>`;
   }
-  s += `</defs><text x="16" y="18" font-size="12" fill="#64748b">sequence ${esc(SQ.title || curSeq)}${SQ.source ? ' (' + esc(SQ.source) + ')' : ''} · ${mode === 'diff' ? 'diff as-is → to-be' : mode === 'asis' ? 'as-is (from traces)' : 'target'}</text>`;
+  s += `</defs><text x="16" y="18" font-size="13" fill="#64748b">sequence ${esc(SQ.title || curSeq)}${SQ.source ? ' (' + esc(SQ.source) + ')' : ''} · ${mode === 'diff' ? 'diff as-is → to-be' : mode === 'asis' ? 'as-is (from traces)' : 'target'}</text>`;
   parts.forEach(p => {
     const x = px[p.id], c = COL[p.st] || COL[''];
     const isSel = ((sel?.kind === 'type' || sel?.kind === 'comp') && sel.id === p.id) || multi.includes('comp:' + p.id) || multi.includes('type:' + p.id);
     const renamed = mode === 'diff' && asIs.types[p.id] && toBe.types[p.id] && asIs.types[p.id].name !== toBe.types[p.id].name;
     s += `<line x1="${x}" y1="${top + hdrH}" x2="${x}" y2="${H - 10}" stroke="#cbd5e1" stroke-dasharray="4 4"/>`;
     s += `<g data-part="${p.id}" style="cursor:pointer" opacity="${p.st === 'removed' ? .55 : 1}"><rect x="${x - 78}" y="${top}" width="156" height="${hdrH}" rx="7" fill="${isSel ? '#dbeafe' : '#fff'}" stroke="${renamed ? COL.changed : c}" stroke-width="${p.st || renamed ? 2.5 : 1.5}" ${p.st === 'removed' ? 'stroke-dasharray="5 3"' : ''}/>`;
-    s += `<text x="${x}" y="${top + 16}" text-anchor="middle" font-size="10" fill="#64748b">${esc(cm(p.id))}</text>`;
-    s += `<text x="${x}" y="${top + 33}" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">${mark('type:' + p.id) || mark('comp:' + p.id)}${esc(nm(p.id))}</text></g>`;
+    s += `<text x="${x}" y="${top + 16}" text-anchor="middle" font-size="11" fill="#64748b">${esc(cm(p.id))}</text>`;
+    s += `<text x="${x}" y="${top + 33}" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">${mark('type:' + p.id) || mark('comp:' + p.id)}${esc(nm(p.id))}</text></g>`;
   });
   parts.forEach(p => {
     if (p.st !== 'removed') s += `<rect data-life="${p.id}" x="${px[p.id] - 14}" y="${top + hdrH}" width="28" height="${H - top - hdrH}" fill="transparent" style="cursor:crosshair"><title>Drag to another lifeline to add a call</title></rect>`;
@@ -1958,8 +2141,8 @@ function renderSeq() {
     const fx = Math.min(...xs) - pad - 20, fw = Math.max(...xs) - Math.min(...xs) + 2 * pad + 60;
     const fy = y0 + idx[0] * rowH - rowH / 2 - 8 + fdepth(fid) * 4, fh = (idx[idx.length - 1] - idx[0] + 1) * rowH + 4 - fdepth(fid) * 8;
     s += `<rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" fill="none" stroke="#94a3b8" stroke-width="1"/>`;
-    s += `<path d="M${fx},${fy} h${f.kind.length * 7 + 46} v12 l-6,6 h-${f.kind.length * 7 + 40} z" fill="#f1f5f9" stroke="#94a3b8"/>`;
-    s += `<text x="${fx + 5}" y="${fy + 13}" font-size="10" fill="#475569"><tspan font-weight="600">${esc(f.kind)}</tspan> ${esc(f.label || '')}</text>`;
+    s += `<path d="M${fx},${fy} h${f.kind.length * 7.6 + 50} v12 l-6,6 h-${f.kind.length * 7.6 + 44} z" fill="#f1f5f9" stroke="#94a3b8"/>`;
+    s += `<text x="${fx + 5}" y="${fy + 13}" font-size="11" fill="#475569"><tspan font-weight="600">${esc(f.kind)}</tspan> ${esc(f.label || '')}</text>`;
   }
   // activation bars: the callee is active from the call to the end of its nested calls
   msgs.forEach((m, i) => {
@@ -1980,13 +2163,13 @@ function renderSeq() {
     s += `<rect x="${lx - 12}" y="${y - 24}" width="${Math.max(rx - lx, 60) + 24}" height="34" rx="6" fill="${isSel ? 'rgba(37,99,235,.12)' : 'transparent'}"/>`;
     if (x1 === x2) {
       s += `<path d="M${x1},${y - 6} h40 v18 h-38" fill="none" stroke="${c}" stroke-width="1.6" ${m.async ? 'stroke-dasharray="6 4"' : ''} marker-end="url(#${mk})"/>`;
-      s += `<text x="${x1 + 46}" y="${y + 4}" font-size="12" fill="${c}">${num}. ${esc(m.label)}${note}</text>`;
+      s += `<text x="${x1 + 46}" y="${y + 4}" font-size="13" fill="${c}">${num}. ${esc(m.label)}${note}</text>`;
     } else {
       const dir = x2 > x1 ? 1 : -1;
       s += `<line x1="${x1}" y1="${y}" x2="${x2 - dir * 2}" y2="${y}" stroke="${c}" stroke-width="${m.st ? 2.2 : 1.6}" ${m.async ? 'stroke-dasharray="7 4"' : ''} ${m.st === 'removed' ? 'stroke-dasharray="3 3"' : ''} marker-end="url(#${mk})"/>`;
-      s += `<text x="${(x1 + x2) / 2}" y="${y - 7}" text-anchor="middle" font-size="12" fill="${m.st ? c : '#0f172a'}">${num}. ${esc(m.label)}${m.async ? '  (async)' : ''}${note}</text>`;
+      s += `<text x="${(x1 + x2) / 2}" y="${y - 7}" text-anchor="middle" font-size="13" fill="${m.st ? c : '#0f172a'}">${num}. ${esc(m.label)}${m.async ? '  (async)' : ''}${note}</text>`;
     }
-    if (m.st) s += `<text x="${rx + 10}" y="${y + 4}" font-size="10" fill="${c}">${m.st}</text>`;
+    if (m.st) s += `<text x="${rx + 10}" y="${y + 4}" font-size="11" fill="${c}">${m.st}</text>`;
     s += `</g>`;
   });
   s += `</svg>`;
@@ -2079,23 +2262,26 @@ const layerOpts = (m, v) => opts([...m.layers.map(l => [l.id, l.name]), ['', '(n
 const opts = (list, v) => list.map(([k, l]) => `<option value="${esc(k)}"${k === v ? ' selected' : ''}>${esc(l)}</option>`).join('');
 const compOpts = v => opts(Object.entries(toBe.components).map(([k, c]) => [k, c.name]), v);
 const typeOpts = v => opts(Object.entries(toBe.types).map(([k]) => [k, qname(toBe, k)]), v);
+const md = s => marked.parse(s || '');
 function threadHTML(t, withLink) {
   const w = whoNext(t), nd = needs(t), last = t.messages.length - 1;
   const tag = m => m.author !== 'agent' ? '' : m.kind === 'decision' ? '<span class="mk decision">decision needed</span>' : '<span class="mk">feedback</span>';
   const choices = (m, i) => i === last && nd === 'decision' && m.options?.length
     ? `<div class="choices">${m.options.map(o => `<button class="btn" data-act="thread.choose" data-id="${t.id}" data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : '';
-  const msgs = t.messages.map((m, i) => `<div class="msg${m.kind === 'decision' ? ' decision' : ''}"><span class="who ${m.author === 'agent' ? 'agent' : 'human'}">${m.author === 'agent' ? 'agent' : 'you'}</span>${tag(m)}<span class="when">${esc((m.at || '').replace('T', ' ').slice(0, 16))}</span><div class="body">${marked.parse(m.text || '')}</div>${choices(m, i)}</div>`).join('');
-  return `<div class="thread ${t.status}${nd ? ' needs-' + nd : ''}"><div class="th-h">${withLink ? `<a data-act="thread.goto" data-key="${esc(t.anchor)}">${esc(t.label || t.anchor)}</a>` : ''}<div class="spacer"></div>
-      ${nd === 'decision' ? '<span class="wait human">decide</span>' : nd === 'feedback' ? '<span class="wait fb">read</span>' : w === 'agent' ? '<span class="wait agent">waiting on agent</span>' : '<span class="wait">resolved</span>'}</div>
+  const msgs = t.messages.map((m, i) => `<div class="msg${m.kind === 'decision' ? ' decision' : ''}"><span class="who ${m.author === 'agent' ? 'agent' : 'human'}">${m.author === 'agent' ? 'Claude' : 'you'}</span>${tag(m)}<span class="when">${esc((m.at || '').replace('T', ' ').slice(0, 16))}</span><div class="body">${md(m.text)}</div>${choices(m, i)}</div>`).join('');
+  return `<div class="thread ${t.status}${nd ? ' needs-' + nd : ''}" id="th-${esc(t.id)}"><div class="th-h">${withLink ? `<a data-act="thread.goto" data-key="${esc(t.anchor)}">${esc(t.label || t.anchor)}</a>` : ''}<div class="spacer"></div>
+      ${nd === 'decision' ? '<span class="wait human">decide</span>' : nd === 'feedback' ? '<span class="wait fb">read</span>' : w === 'agent' ? '<span class="wait agent">waiting on Claude</span>' : '<span class="wait">resolved</span>'}</div>
+    ${t.snapshot ? snapHTML(t) : ''}
     ${msgs}
-    ${t.status === 'open' ? `<textarea id="r-${t.id}" rows="1" placeholder="Reply…"></textarea>
+    ${t.status === 'open' ? pending().filter(s => s.thread === t.id).map(sugCard).join('') : ''}
+    ${t.status === 'open' ? `<textarea id="r-${t.id}" rows="1" placeholder="Reply, or type @ to link a component, type or task"></textarea>
     <div class="row"><button class="btn" data-act="thread.reply" data-id="${t.id}">Reply</button><button class="btn" data-act="thread.resolve" data-id="${t.id}">Resolve</button></div>`
     : `<div class="row"><button class="btn" data-act="thread.reopen" data-id="${t.id}">Reopen</button></div>`}</div>`;
 }
-const composer = key => `<textarea id="c-new" rows="2" placeholder="Comment, question or instruction. Open threads become open questions in the plan."></textarea>
-  <div class="row"><button class="btn" data-act="thread.new" data-key="${esc(key)}">Comment</button></div>`;
+const composer = key => `<textarea id="c-new" rows="2" data-key="${esc(key)}" placeholder="Comment, question or instruction. Type @ to link a component, type or task. Open threads become open questions in the plan."></textarea>
+  <div class="row"><button class="btn" data-act="thread.new" data-key="${esc(key)}">Comment</button><span class="mute" style="font-size:12px">⌘↵ sends</span></div>`;
 const cbtn = key => `<button class="cbtn${openOn(key) ? ' has' : ''}" data-act="thread.compose" data-key="${esc(key)}" title="Comment">💬${threadsOn(key).length || ''}</button>`;
-const noteBox = key => `<h4>Comments</h4>${threadsOn(key).map(t => threadHTML(t)).join('')}${key.startsWith('group:') ? '' : groupsWith(key).map(t => threadHTML(t, true)).join('')}${composer(key)}`;
+const noteBox = key => `<h4 id="comments">Comments</h4>${threadsOn(key).map(t => threadHTML(t)).join('')}${key.startsWith('group:') ? '' : groupsWith(key).map(t => threadHTML(t, true)).join('')}${composer(key)}`;
 
 const KINDS = [['domain', 'domain'], ['vendor', 'vendor'], ['technical', 'technical']];
 const ownerOpts = v => opts([['', '(no owner)'], ...Object.entries(toBe.components).map(([k, c]) => [k, c.name])], v || '');
@@ -2145,39 +2331,59 @@ function groupHTML() {
     ${noteBox(key)}
     ${others.length ? `<h4>Other groups with these items</h4>${others.map(t => threadHTML(t, true)).join('')}` : ''}`;
 }
+// Pages without a selection: the sequence, the glossary and the model as a whole.
+const roNote = () => mode === 'asis' ? `<div class="callout">You are viewing the as-is model. Switch to To-be or Diff to edit; editing here switches automatically.</div>` : '';
+function seqPage() {
+  const SQ = toBe.sequences[curSeq];
+  if (!SQ) return crumb('Sequences') + '<p class="mute">This model has no sequences.</p>';
+  const parts = SQ.participants, po = v => opts(parts.map(p => [p, pname(toBe, p)]), v);
+  const src = {seqtrace: 'Extracted by seqtrace from a traced request.', otel: 'Extracted from OpenTelemetry traces.', manual: 'Drawn by hand.'}[SQ.source] || 'Extracted from traces of the integration tests.';
+  return `${crumb('Sequences', esc(SQ.title || curSeq))}${roNote()}<div class="ins-h"><b>${esc(SQ.title || curSeq)}</b></div><p class="mute">${src}${SQ.entry ? ` Entry: <code>${esc(SQ.entry)}</code>.` : ''} Click a call or participant in the diagram to edit it.</p><div class="row"><button class="btn" data-act="seq.comps">Show its components</button><button class="btn" data-act="seq.types">Show its types</button></div>
+    <h4>Add call</h4><div class="row"><select id="i-from">${po(parts[1] || parts[0])}</select>→<select id="i-to">${po(parts[2] || parts[0])}</select></div>
+    <div class="row"><input id="i-label" placeholder="Method(args)"><button class="btn" data-act="msg.add">Add at end</button></div>
+    <h4>Add participant</h4><div class="row"><select id="i-part">${compOpts()}${Object.keys(toBe.types).length <= 400 ? typeOpts() : ''}</select><button class="btn" data-act="part.add">Add</button></div>`;
+}
+function glossPage() {
+  const ro = mode === 'asis', m = ro ? asIs : toBe, L = leaks(m);
+  return `${crumb('Glossary')}${roNote()}<div class="ins-h"><b>Glossary</b></div>
+    <p class="mute">Concepts are the words of the domain and of the vendors we use. Each has one owner component. Other components list it under <b>uses</b> (allowed) or <b>avoid</b> (forbidden). Using terms of a concept you avoid, or of a component the policy forbids you to depend on, is a leak. Glossary edits become tasks to update each GLOSSARY.md; new leaks become tasks to remove the terms.</p>
+    <p>${Object.keys(m.vocabulary?.concepts || {}).length} concepts, ${L.length} leak${L.length === 1 ? '' : 's'}.</p>
+    ${ro ? '' : `<h4>Add concept</h4>
+    <div class="row"><input id="i-kname" placeholder="Name, e.g. Cart item"><select id="i-kkind">${opts(KINDS, 'domain')}</select></div>
+    <div class="row"><select id="i-kowner">${ownerOpts([...focus][0] || '')}</select></div>
+    <div class="row"><input id="i-kterms" placeholder="terms, comma separated: cart item, basket"></div>
+    <textarea id="i-kdef" rows="2" placeholder="Definition"></textarea>
+    <div class="row"><button class="btn primary" data-act="concept.add">Add concept</button></div>`}`;
+}
+function modelPage() {
+  return `${crumb('Edit the model')}${roNote()}<div class="ins-h"><b>${esc(META.repo)}</b> <span class="mute mono">@${esc(META.commit)}</span></div>
+    <p class="mute">The as-is model was extracted from the code (packages, types, fields, methods) and from traces (sequences). Edits change the target model; the diff and the plan follow.</p>
+    <h4>Add type</h4><div class="row"><input id="i-tname" placeholder="TypeName"><select id="i-tkind">${opts([['struct', 'struct'], ['interface', 'interface']])}</select><select id="i-tcomp">${compOpts([...focus][0] || Object.keys(toBe.components)[0])}</select><button class="btn" data-act="type.add">Add</button></div>
+    <h4>Add package</h4><div class="row"><input id="i-cname" placeholder="name"><select id="i-clayer">${layerOpts(toBe)}</select><button class="btn" data-act="comp.add">Add</button></div>
+    ${policyHTML()}
+    <h4>Model as text</h4>${modelHTML()}`;
+}
+function pairPage() {
+  const [a, b] = sel.id.split('|'), p = (HOT.d?.pairs || []).find(x => (x.a === a && x.b === b) || (x.a === b && x.b === a));
+  return `${crumb('Co-change', esc(cname(toBe, a) + ' and ' + cname(toBe, b)))}<div class="ins-h"><b>${esc(cname(toBe, a))}</b> and <b>${esc(cname(toBe, b))}</b></div>
+    ${p ? `<p>They changed together in <b>${p.together}</b> commits in the last ${HOT.d.since_days} days (degree ${Math.round(p.degree * 100)}%).</p>
+    <p>${p.dependency ? 'One depends on the other, so the coupling is visible in the code.' : '<b>Neither imports the other.</b> They still change together: hidden coupling. Look for a shared concept, a duplicated rule or a protocol between them.'}</p>` : '<p class="mute">No data.</p>'}
+    <div class="row"><button class="btn" data-act="comp.goto" data-id="${esc(a)}">${esc(cname(toBe, a))}</button><button class="btn" data-act="comp.goto" data-id="${esc(b)}">${esc(cname(toBe, b))}</button></div>`;
+}
+function compMetrics(m, id, out, inn) {
+  const h = HOT.d?.components?.[id], nt = Object.values(m.types).filter(t => t.comp === id).length;
+  const pairs = (HOT.d?.pairs || []).filter(p => p.a === id || p.b === id).slice(0, 6);
+  return `<div class="metrics"><div class="metric">Used by<b>${inn.length}</b></div><div class="metric">Uses<b>${out.length}</b></div><div class="metric">Types<b>${nt}</b></div>
+    ${h ? `<div class="metric">Commits, ${HOT.d.since_days} days<b>${h.commits}</b></div><div class="metric">Authors<b>${h.authors}</b></div>` : ''}</div>
+    ${pairs.length ? `<h4>Changes together with</h4><ul class="members">${pairs.map(p => { const o = p.a === id ? p.b : p.a; return `<li><a style="cursor:pointer;color:var(--acc)" data-act="comp.goto" data-id="${esc(o)}">${esc(cname(m, o))}</a><span class="mute">${p.together} commits${p.dependency ? '' : ' · <b style="color:var(--agent)">no import</b>'}</span></li>`; }).join('')}</ul>` : ''}`;
+}
 function inspector() {
   if (multi.length) return groupHTML();
   const ro = mode === 'asis';
   const m = ro ? asIs : toBe;
-  const roMsg = ro ? `<div class="callout">You are viewing the as-is model. Switch to To-be or Diff to edit; editing here switches automatically.</div>` : '';
-  if (!sel) {
-    if (view === 'seq') {
-      const parts = toBe.sequences[curSeq].participants;
-      const SQ = toBe.sequences[curSeq], po = v => opts(parts.map(p => [p, pname(toBe, p)]), v);
-      const src = {seqtrace: 'Extracted by seqtrace from a traced request.', otel: 'Extracted from OpenTelemetry traces.', manual: 'Drawn by hand.'}[SQ.source] || 'Extracted from traces of the integration tests.';
-      return `${roMsg}<div class="ins-h"><b>${esc(SQ.title || curSeq)}</b></div><p class="mute">${src}${SQ.entry ? ` Entry: <code>${esc(SQ.entry)}</code>.` : ''} Click a message or participant to edit it.</p><div class="row"><button class="btn" data-act="seq.comps">Show its components</button><button class="btn" data-act="seq.types">Show its types</button></div>
-        <h4>Add message</h4><div class="row"><select id="i-from">${po(parts[1] || parts[0])}</select>→<select id="i-to">${po(parts[2] || parts[0])}</select></div>
-        <div class="row"><input id="i-label" placeholder="Method(args)"><button class="btn" data-act="msg.add">Add at end</button></div>
-        <h4>Add participant</h4><div class="row"><select id="i-part">${compOpts()}${Object.keys(toBe.types).length <= 400 ? typeOpts() : ''}</select><button class="btn" data-act="part.add">Add</button></div>`;
-    }
-    if (view === 'glossary') {
-      const L = leaks(m);
-      return `${roMsg}<div class="ins-h"><b>Glossary</b></div>
-        <p class="mute">Concepts are the words of the domain and of the vendors we use. Each has one owner component. Other components list it under <b>uses</b> (allowed) or <b>avoid</b> (forbidden). Using terms of a concept you avoid, or of a component the policy forbids you to depend on, is a leak. Glossary edits become tasks to update each GLOSSARY.md; new leaks become tasks to remove the terms.</p>
-        <p>${Object.keys(m.vocabulary?.concepts || {}).length} concepts, ${L.length} leak${L.length === 1 ? '' : 's'}.</p>
-        ${ro ? '' : `<h4>Add concept</h4>
-        <div class="row"><input id="i-kname" placeholder="Name, e.g. Cart item"><select id="i-kkind">${opts(KINDS, 'domain')}</select></div>
-        <div class="row"><select id="i-kowner">${ownerOpts([...focus][0] || '')}</select></div>
-        <div class="row"><input id="i-kterms" placeholder="terms, comma separated: cart item, basket"></div>
-        <textarea id="i-kdef" rows="2" placeholder="Definition"></textarea>
-        <div class="row"><button class="btn primary" data-act="concept.add">Add concept</button></div>`}`;
-    }
-    return `${roMsg}<div class="ins-h"><b>${META.repo}</b> <span class="mute mono">@${META.commit}</span></div>
-      <p class="mute">The as-is model was extracted from the code (packages, types, fields, methods) and from traces (sequences). Edits change the target model; the diff and the plan follow.</p>
-      <h4>Add type</h4><div class="row"><input id="i-tname" placeholder="TypeName"><select id="i-tkind">${opts([['struct', 'struct'], ['interface', 'interface']])}</select><select id="i-tcomp">${compOpts([...focus][0] || Object.keys(toBe.components)[0])}</select><button class="btn" data-act="type.add">Add</button></div>
-      <h4>Add package</h4><div class="row"><input id="i-cname" placeholder="name"><select id="i-clayer">${layerOpts(toBe)}</select><button class="btn" data-act="comp.add">Add</button></div>
-      ${policyHTML()}`;
-  }
+  const roMsg = roNote();
+  if (!sel) return '';
+  if (sel.kind === 'pair') return pairPage();
   if (sel.kind === 'type') {
     const t = m.types[sel.id];
     if (!t) return `<div class="ins-h"><b>${esc(qname(asIs, sel.id))}</b> ${badge('removed')}</div><p class="mute">Removed in the target model.</p>`;
@@ -2209,6 +2415,7 @@ function inspector() {
     const ce = compEdges(m);
     const out = [...ce.values()].filter(e => e.from === sel.id), inn = [...ce.values()].filter(e => e.to === sel.id);
     return `${roMsg}<div class="ins-h"><span class="kind">package</span><b>${esc(c.name)}</b>${mode === 'diff' ? badge(D.comp[sel.id]) : ''}</div><div class="anchor mono">📍 ${esc(c.path)}</div>
+      ${compMetrics(m, sel.id, out, inn)}
       <div class="row"><button class="btn" data-act="comp.focus">Focus</button><button class="btn" data-act="comp.types">Show types</button>${cycleOf(mode === 'asis' ? asIs : toBe, sel.id).length ? `<button class="btn" data-act="comp.cycle" title="Select the components and dependencies of the import cycle">Select cycle (${cycleOf(mode === 'asis' ? asIs : toBe, sel.id).length})</button>` : ''}</div>
       <h4>Types</h4>${(() => { const ts = Object.entries(m.types).filter(([, t]) => t.comp === sel.id); return `<ul class="members">${ts.slice(0, 40).map(([k, t]) => `<li><span><span class="kind">${t.kind}</span> ${esc(t.name)}</span></li>`).join('') || '<li class="mute">none</li>'}${ts.length > 40 ? `<li class="mute">… ${ts.length - 40} more</li>` : ''}</ul>`; })()}
       <h4>Depends on</h4><p>${out.map(e => esc(cname(m, e.to)) + ` <span class="mute">(${edgeCount(e)})</span>`).join(', ') || '<span class="mute">nothing</span>'}</p>
@@ -2301,12 +2508,32 @@ const actions = {
     edit(m => { const id = extractInterface(m, sel.id, n, val('i-icomp'), ms); sel = {kind: 'type', id}; });
   },
   'type.del': () => edit(m => { deleteType(m, sel.id); sel = null; }),
-  'thread.new': e => { const v = val('c-new'); if (v) { $('c-new').value = ''; addThread(e.dataset.key, v); } },
+  'thread.new': e => { const v = val('c-new'); if (!v) return; $('c-new').value = ''; acHide(); const k = e.dataset.key; if (k === composeKey) composeKey = null; addThread(k, v, 'human', snapshotFor(k)); },
   'thread.choose': e => replyThread(e.dataset.id, e.dataset.opt),
   'thread.reply': e => { const v = val('r-' + e.dataset.id); if (v) { $('r-' + e.dataset.id).value = ''; replyThread(e.dataset.id, v); } },
   'thread.resolve': e => { const v = val('r-' + e.dataset.id); $('r-' + e.dataset.id).value = ''; replyThread(e.dataset.id, v, 'resolved'); },
   'thread.reopen': e => replyThread(e.dataset.id, '', 'open'),
-  'thread.compose': e => { composeKey = e.dataset.key; tab = /^(task|step):/.test(composeKey) ? 'plan' : 'comments'; renderSide(); $('c-new')?.focus(); },
+  'thread.compose': e => {
+    const k = e.dataset.key;
+    if (/^(task|step):/.test(k)) return showTask(k.slice(5).split('#')[0], k);
+    if (sel && anchorOf(sel) === k) return actions['page.comment']();
+    composeKey = k; sel = null; multi = []; page = 'plan'; applySel(); renderSide(); $('panel').scrollTop = 0; $('c-new')?.focus();
+  },
+  'compose.close': () => { composeKey = null; renderSide(); },
+  'page.plan': () => { composeKey = null; toPlan(); },
+  'page.model': () => { sel = null; multi = []; page = 'model'; applySel(); renderSide(); },
+  'page.seq': () => { sel = null; multi = []; page = 'seq'; if (view !== 'seq') { view = 'seq'; render(); } else { renderSeq(); renderSide(); } },
+  'page.glossary': () => { sel = null; multi = []; page = 'glossary'; if (view !== 'glossary') { view = 'glossary'; render(); } else renderSide(); },
+  'page.comment': () => { const c = $('c-new'); if (c) { c.scrollIntoView({block: 'center', behavior: 'smooth'}); c.focus(); } },
+  'task.show': e => showInDiagram(taskAnchor(e.dataset.key)),
+  'snap.open': e => openSnapshot(e.closest('.thread')?.id.slice(3)),
+  'sug.accept': e => decideSug(e.dataset.id, 'accept'),
+  'sug.reject': e => decideSug(e.dataset.id, 'reject'),
+  'sug.show': e => {
+    SUG.active = e.dataset.id; mode = 'sugg'; if (view === 'seq') view = 'components'; render();
+    const el = cy.$('.sugg'); if (el.length && $('cy').style.visibility !== 'hidden') { cy.fit(el.closedNeighborhood(), 80); if (cy.zoom() > 1) { cy.zoom(1); cy.center(el); } }
+    else if (!sugPreview()?.model) toast('The preview is still loading. The diagram updates when it is ready.');
+  },
   'thread.goto': e => gotoAnchor(e.dataset.key),
   'comp.rename': () => { const v = val('i-cname'); if (v) edit(m => { const c = m.components[sel.id]; c.name = v; c.path = c.path.replace(/[^/]+$/, v); }); },
   'comp.layer': () => edit(m => m.components[sel.id].layer = val('i-clayer')),
@@ -2345,13 +2572,13 @@ const actions = {
   },
   'msg.add': () => { const l = val('i-label'); if (!l) return; edit(m => m.sequences[curSeq].messages.push({id: newMsgId(), from: val('i-from'), to: val('i-to'), label: l, async: false})); },
   'part.add': () => { const p = val('i-part'); edit(m => { const S = m.sequences[curSeq]; if (!S.participants.includes(p)) S.participants.push(p); }); },
-  'plan.fmt': e => { planFmt = e.dataset.v; renderSide(); },
+  'plan.raw': e => { planFmtRaw = e.dataset.v; openSecs.add('text'); renderSide(); },
   'model.fmt': e => { modelFmt = e.dataset.v; renderSide(); },
   'model.save': saveTarget,
   'model.openTarget': () => { openAs = 'target'; $('fileIn').click(); },
   'comp.focus': () => setFocus([sel.id], true),
-  'comp.goto': e => { sel = {kind: 'comp', id: e.dataset.id}; tab = 'inspect'; render(); },
-  'concept.goto': e => { view = 'glossary'; sel = {kind: 'concept', id: e.dataset.id}; tab = 'inspect'; render(); },
+  'comp.goto': e => { sel = {kind: 'comp', id: e.dataset.id}; render(); },
+  'concept.goto': e => { view = 'glossary'; sel = {kind: 'concept', id: e.dataset.id}; render(); },
   'concept.add': () => {
     const n = val('i-kname'); if (!n) return;
     const owner = val('i-kowner'), terms = parseTerms(val('i-kterms')), def = val('i-kdef'), kind = val('i-kkind');
@@ -2398,9 +2625,9 @@ const actions = {
   'multi.clear': () => { multi = []; render(); },
   'multi.drop': e => { multi = multi.filter(a => a !== e.dataset.key); render(); },
   'comp.types': () => { focus.add(sel.id); view = 'types'; setFocus([...focus], true); },
-  'plan.copy': () => { const P = buildPlan(asIs, toBe, D); navigator.clipboard?.writeText(planFmt === 'json' ? planJSON(P) : planMD(P)); },
+  'plan.copy': () => { const P = buildPlan(asIs, toBe, D); navigator.clipboard?.writeText(planFmtRaw === 'json' ? planJSON(P) : planMD(P)); toast('Copied the plan.'); },
   'plan.download': () => {
-    const P = buildPlan(asIs, toBe, D), json = planFmt === 'json';
+    const P = buildPlan(asIs, toBe, D), json = planFmtRaw === 'json';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([json ? planJSON(P) : planMD(P)], {type: 'text/plain'}));
     a.download = json ? 'plan.json' : 'plan.md'; a.click();
@@ -2421,41 +2648,66 @@ const actions = {
     else if (it.cat === 'sequence') { view = 'seq'; curSeq = it.seq; sel = it.id ? {kind: 'msg', seq: it.seq, id: it.id} : null; }
     else if (it.cat === 'rule' || it.cat === 'dependency') { view = 'components'; sel = null; }
     else if (it.cat === 'glossary') { view = 'glossary'; sel = it.op.startsWith('concept.') ? {kind: 'concept', id: it.id} : {kind: 'comp', id: it.comp}; }
-    tab = 'inspect'; render();
+    render();
   },
 };
-$('panel').addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (b && actions[b.dataset.act]) actions[b.dataset.act](b); });
-$('panel').addEventListener('input', e => { if (e.target.id === 'i-intent') { intent = e.target.value; clearTimeout(window._it); window._it = setTimeout(() => { const o = $('planOut'); if (o) o.innerHTML = planBody(); }, 300); } });
+$('panel').addEventListener('click', e => {
+  const mn = e.target.closest('.mention'); if (mn) { e.preventDefault(); return gotoMention(mn.dataset.anchor); }
+  const sn = e.target.closest('.snap'); if (sn && !e.target.closest('[data-act]')) return actions['snap.open'](sn);
+  const b = e.target.closest('[data-act]'); if (b && actions[b.dataset.act] && !b.disabled) actions[b.dataset.act](b);
+});
+$('panel').addEventListener('input', e => {
+  if (e.target.id === 'i-intent') {
+    intent = e.target.value;
+    clearTimeout(window._it);
+    window._it = setTimeout(() => { const t = intentTitle(), h = $('docTitle'); if (h) { h.textContent = t || 'What should this change achieve?'; h.classList.toggle('empty', !t); } publish(); }, 300);
+  }
+  if (e.target.tagName === 'TEXTAREA' && (e.target.id === 'c-new' || e.target.id.startsWith('r-'))) acUpdate(e.target);
+});
+$('panel').addEventListener('change', e => {
+  const c = e.target.closest('[data-sug]'); if (!c) return;
+  const s = SUG.list.find(x => x.id === c.dataset.sug), P = SUG.picked[s.id], i = +c.dataset.i;
+  if (c.checked) P.add(i); else P.delete(i);
+  renderSide(); fetchPreview(s);
+});
+// details elements remember whether they are open; a task's body renders when opened
+$('panel').addEventListener('toggle', e => {
+  const d = e.target, k = d.dataset?.sec; if (!k) return;
+  if (d.open === openSecs.has(k)) return;
+  if (d.open) openSecs.add(k); else openSecs.delete(k);
+  localStorage.setItem('archplan.openSecs', JSON.stringify([...openSecs].filter(x => !x.startsWith('t:'))));
+  if (d.open && (k.startsWith('t:') || k === 'text')) renderSide();
+}, true);
+$('panel').addEventListener('keydown', e => {
+  if (acKey(e)) return;
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && e.target.tagName === 'TEXTAREA') {
+    const id = e.target.id;
+    if (id === 'c-new') { e.preventDefault(); $('panel').querySelector('[data-act="thread.new"]')?.click(); }
+    else if (id.startsWith('r-')) { e.preventDefault(); $('panel').querySelector(`[data-act="thread.reply"][data-id="${id.slice(2)}"]`)?.click(); }
+  }
+});
+$('panel').addEventListener('mouseover', e => { const m = e.target.closest('.mention'); if (m) hlAnchor(m.dataset.anchor, true); });
+$('panel').addEventListener('mouseout', e => { const m = e.target.closest('.mention'); if (m) hlAnchor(m.dataset.anchor, false); });
 
 function gotoAnchor(key) {
   if (key.startsWith('group:')) {
     const g = groupMembers(key), k0 = g[0].split(':')[0];
     view = {type: 'types', tedge: 'types', comp: view === 'glossary' ? 'glossary' : 'components', cedge: 'components', concept: 'glossary', msg: 'seq'}[k0] || view;
     if (k0 === 'msg') curSeq = g[0].split(':')[1];
-    multi = g; sel = null; tab = 'inspect'; return render();
+    multi = g; sel = null; return render();
   }
   const [k, ...r] = key.split(':'), x = r[0];
-  if (k === 'task' || k === 'step') { composeKey = key; tab = 'plan'; return renderSide(); }
+  if (k === 'task' || k === 'step') return showTask(r.join(':').split('#')[0], key);
   if (k === 'type') { view = 'types'; sel = {kind: 'type', id: x}; const c = (toBe.types[x] || asIs.types[x])?.comp; if (c && !visibleTypes()?.ids.has(x)) focus.add(c); }
   else if (k === 'comp') { view = view === 'glossary' ? 'glossary' : 'components'; sel = {kind: 'comp', id: x}; }
   else if (k === 'concept') { view = 'glossary'; sel = {kind: 'concept', id: x}; }
   else if (k === 'leak') { view = 'glossary'; sel = {kind: 'comp', id: x}; }
   else if (k === 'cedge') { view = 'components'; sel = {kind: 'cedge', id: r.join(':')}; }
   else if (k === 'msg') { view = 'seq'; curSeq = x; sel = {kind: 'msg', seq: x, id: r.slice(1).join(':')}; }
-  tab = 'inspect'; render();
-}
-function commentsHTML() {
-  const st = collab ? `<div class="collab"><b class="on">● shared</b> with agents through <code>archplan mcp</code> in <code>${esc(collab.root)}</code></div>`
-    : `<div class="collab">● local only. Run <code>archplan up</code> in a repository to share threads with an agent over MCP.</div>`;
-  const comp = composeKey ? `<h4>New comment on ${esc(anchorLabel(composeKey))}</h4>${threadsOn(composeKey).map(t => threadHTML(t)).join('')}${composer(composeKey)}` : '';
-  const by = f => threads.filter(f).sort((a, b) => (b.updated || '').localeCompare(a.updated || ''));
-  const sec = (title, list) => list.length ? `<h4>${title} (${list.length})</h4>${list.map(t => threadHTML(t, true)).join('')}` : '';
-  const body = sec('Decisions for you', by(t => needs(t) === 'decision')) + sec('Feedback from the agent', by(t => needs(t) === 'feedback'))
-    + sec('Waiting on the agent', by(t => whoNext(t) === 'agent')) + sec('Resolved', by(t => whoNext(t) === 'nobody'));
-  return st + comp + (body || (comp ? '' : '<div class="empty">No comments yet. Select an item and comment in the inspector, or use 💬 next to a plan task or step.</div>'));
+  render();
 }
 function changesHTML() {
-  if (!D.items.length) return `<div class="empty">No changes yet. Edit the diagram, or press <b>▶ Apply demo edits</b>.</div>`;
+  if (!D.items.length) return `<div class="empty">No changes yet. Edit the diagram.</div>`;
   const groups = [['type', 'Types'], ['component', 'Packages'], ['sequence', 'Behaviour'], ['rule', 'Rules'], ['glossary', 'Glossary'], ['dependency', 'Package dependencies (derived)'], ['note', 'Review notes']];
   const sym = {add: '+', rem: '−', chg: '~', info: '?'};
   return groups.map(([cat, title]) => {
@@ -2463,34 +2715,6 @@ function changesHTML() {
     if (!its.length) return '';
     return `<div class="grp">${title}</div>` + its.map(([it, i]) => `<div class="chg c-${it.cls}" data-act="goto" data-i="${i}"><span class="op">${sym[it.cls]}</span><span>${esc(it.text)}</span></div>`).join('');
   }).join('');
-}
-function planBody() {
-  const P = buildPlan(asIs, toBe, D);
-  if (planFmt === 'json') return `<pre class="raw mono">${esc(planJSON(P))}</pre>`;
-  if (planFmt === 'md') return `<pre class="raw mono">${esc(planMD(P))}</pre>`;
-  const div = document.createElement('div');
-  div.className = 'md'; div.innerHTML = marked.parse(planMD(P));
-  const btn = key => `<button class="cbtn${openOn(key) ? ' has' : ''}" data-act="thread.compose" data-key="${esc(key)}" title="Comment">💬${threadsOn(key).length || ''}</button>`;
-  const h3s = [...div.querySelectorAll('h3')];
-  h3s.forEach((h, i) => {
-    const t = P.tasks[i]; if (!t) return;
-    h.insertAdjacentHTML('beforeend', ' ' + btn('task:' + t.key));
-    // the first list after "Steps:" holds the steps, in order
-    let el = h.nextElementSibling;
-    while (el && el.tagName !== 'H3' && !(el.tagName === 'P' && el.textContent.trim() === 'Steps:')) el = el.nextElementSibling;
-    const ul = el?.tagName === 'P' ? el.nextElementSibling : null;
-    if (ul?.tagName === 'UL') [...ul.children].forEach((li, j) => li.insertAdjacentHTML('beforeend', ' ' + btn(`step:${t.key}#${j}`)));
-  });
-  const focusKey = composeKey && (composeKey.startsWith('task:') || composeKey.startsWith('step:')) ? composeKey : null;
-  return (focusKey ? `<div class="callout"><b>${esc(anchorLabel(focusKey))}</b>${threadsOn(focusKey).map(t => threadHTML(t)).join('')}${composer(focusKey)}</div>` : '') + div.outerHTML;
-}
-function planHTML() {
-  if (!D.items.some(i => i.cat !== 'dependency')) return `<div class="empty">No changes yet, so no plan. Edit the diagram, or press <b>▶ Apply demo edits</b>.</div>`;
-  const f = v => `<button class="btn${planFmt === v ? ' primary' : ''}" data-act="plan.fmt" data-v="${v}">${{rendered: 'Rendered', md: 'Markdown', json: 'JSON'}[v]}</button>`;
-  return `<h4 style="margin-top:0">Intent</h4><textarea id="i-intent" rows="2" placeholder="What should this change achieve? The agent reads this first.">${esc(intent)}</textarea>
-    <div class="row" style="margin:10px 0">${f('rendered')}${f('md')}${f('json')}<div class="spacer"></div>
-    <button class="btn" data-act="plan.copy">Copy</button><button class="btn" data-act="plan.download">Download</button></div>
-    <div id="planOut">${planBody()}</div>`;
 }
 function modelHTML() {
   const f = v => `<button class="btn${modelFmt === v ? ' primary' : ''}" data-act="model.fmt" data-v="${v}">${{diff: 'Diff', target: 'Target', base: 'As-is', d2: 'D2 export'}[v]}</button>`;
@@ -2523,18 +2747,129 @@ function verifyHTML() {
   return head + sum + rows;
 }
 
+// ---------- the left column: the plan as a document, and item pages ----------
+const openSecs = new Set(JSON.parse(localStorage.getItem('archplan.openSecs') || '[]'));
+const crumb = (...parts) => `<div class="crumb"><a data-act="page.plan">Plan</a>${parts.map(p => ' › ' + p).join('')}</div>`;
+const SEC_OF = {type: 'Types', comp: 'Components', concept: 'Glossary', tedge: 'Types', cedge: 'Components', msg: 'Sequences', leak: 'Glossary'};
+function itemPage() {
+  const body = inspector();
+  if (multi.length) return crumb('Selection') + body;
+  if (sel.kind === 'pair') return body;
+  const sec = sel.kind === 'comp' && view === 'glossary' ? 'Glossary' : SEC_OF[sel.kind] || '';
+  const label = anchorLabel(anchorOf(sel)).replace(/^component /, '');
+  return `<div class="crumb" style="display:flex;gap:6px"><span><a data-act="page.plan">Plan</a> › ${esc(sec)} › <span style="color:var(--ink)">${esc(label)}</span></span><span class="spacer"></span><button class="linkb" data-act="page.comment">Comment</button></div>` + body;
+}
+const intentTitle = () => { const s = (intent || '').trim().split('\n')[0], m = /^(.{8,}?[.!?])(\s|$)/.exec(s); const t = m ? m[1] : s; return t.length > 90 ? t.slice(0, 88) + '…' : t; };
+// Threads per plan task (open ones) and the threads that belong to no task.
+function threadPlaces(P) {
+  const byKey = Object.fromEntries(P.tasks.map(t => [t.key, t])), per = {}, loose = [];
+  for (const t of threads) {
+    if (t.status !== 'open') continue;
+    const tk = taskOfAnchor(t.anchor, asIs, toBe, byKey) || groupMembers(t.anchor).map(a => taskOfAnchor(a, asIs, toBe, byKey)).find(Boolean);
+    if (tk) (per[tk.key] ||= []).push(t); else loose.push(t);
+  }
+  return {per, loose};
+}
+function taskBody(t, P) {
+  const div = document.createElement('div');
+  div.innerHTML = md(taskMD(t, P).join('\n'));
+  let el = div.firstElementChild;
+  while (el && !(el.tagName === 'P' && el.textContent.trim() === 'Steps:')) el = el.nextElementSibling;
+  const ul = el?.nextElementSibling;
+  if (ul?.tagName === 'UL') [...ul.children].forEach((li, j) => li.insertAdjacentHTML('beforeend', ' ' + cbtn(`step:${t.key}#${j}`)));
+  return div.innerHTML;
+}
+function taskCard(t, P, ths) {
+  const key = 'task:' + t.key, dec = ths.some(x => needs(x) === 'decision');
+  const comp = composeKey && (composeKey === key || composeKey.startsWith(`step:${t.key}#`));
+  return `<div class="task${dec ? ' dec' : ''}" id="task-${esc(t.key)}"><div class="task-h"><span class="tid">${t.id}</span><span class="tt">${esc(t.title)}</span>${dec ? '<span class="pill warn">decision</span>' : ''}${cbtn(key)}</div>
+    <div class="meta">${t.deps.size ? `<span>after ${[...t.deps].map(d => P.tasks.find(x => x.key === d).id).join(', ')}</span>` : ''}${t.files.length ? `<span>${plural(t.files.length, 'file')}</span>` : ''}<span>${plural(t.steps.length, 'step')}</span><span class="spacer"></span><button class="linkb" data-act="task.show" data-key="${esc(t.key)}">Show in diagram</button></div>
+    <details class="plain" data-sec="t:${esc(t.key)}"${openSecs.has('t:' + t.key) ? ' open' : ''}><summary>Details</summary><div class="tbody">${openSecs.has('t:' + t.key) ? taskBody(t, P) : ''}</div></details>
+    ${comp ? `<div class="callout" style="margin:8px 0 0">New comment on <b>${esc(anchorLabel(composeKey))}</b>${composer(composeKey)}</div>` : ''}
+    ${ths.length ? `<div class="tthreads">${ths.map(x => threadHTML(x, x.anchor !== key)).join('')}</div>` : ''}</div>`;
+}
+const fold = (id, title, body, open) => `<div class="dsec" id="sec-${id}"><details class="plain" data-sec="${id}"${openSecs.has(id) || open ? ' open' : ''}><summary><h4 style="display:inline-flex;margin:0">${title}</h4></summary>${body}</details></div>`;
+function planDoc() {
+  const P = buildPlan(asIs, toBe, D), {per, loose} = threadPlaces(P);
+  const viol = violations(toBe), dec = threads.filter(t => needs(t) === 'decision').length, title = intentTitle();
+  const anyChange = D.items.some(i => i.cat !== 'dependency');
+  const loneSug = pending().filter(s => !threads.some(t => t.id === s.thread && t.status === 'open'));
+  const composeLoose = composeKey && !/^(task|step):/.test(composeKey);
+  const rules = toBe.policy.rules.map((r, i) => [r, i]).filter(([r]) => r.effect === 'deny');
+  const vio = r => viol.filter(e => ruleHits(r, e.from, e.to));
+  const pol = toBe.policy, E = pol.enforcer, nAllow = pol.rules.filter(r => r.effect === 'allow').length;
+  const sec = (id, title, body) => `<div class="dsec" id="sec-${id}"><h4>${title}</h4>${body}</div>`;
+  const decT = loose.filter(t => needs(t) === 'decision'), qT = loose.filter(t => needs(t) !== 'decision'), done = threads.filter(t => t.status !== 'open');
+  const st = collab ? `<div class="collab"><b class="on">● shared</b> with Claude through <code>archplan mcp</code> in <code>${esc(collab.root)}</code></div>`
+    : `<div class="collab">● local only. Run <code>archplan up</code> in a repository to share threads with Claude.</div>`;
+  return `${composeLoose ? `<div class="callout" id="composeBox"><b>New comment on ${esc(anchorLabel(composeKey))}</b> <button class="x" data-act="compose.close" title="Close">×</button>${threadsOn(composeKey).map(t => threadHTML(t)).join('')}${composer(composeKey)}</div>` : ''}
+    <div class="dsec" id="sec-intent" style="margin-top:0"><div class="doc-title${title ? '' : ' empty'}" id="docTitle">${esc(title || 'What should this change achieve?')}</div>
+    <textarea id="i-intent" rows="3" placeholder="Write the intent: what should this change achieve? Claude reads this first.">${esc(intent)}</textarea>
+    <div class="pills">${viol.length ? `<span class="pill rem">${plural(viol.length, 'rule')} violated</span>` : `<span class="pill">no rule violated</span>`}<span class="pill">${plural(P.tasks.length, 'task')}</span>${dec ? `<span class="pill warn">${plural(dec, 'decision')}</span>` : ''}${pending().length ? `<span class="pill add">${plural(pending().length, 'suggestion')}</span>` : ''}</div>${st}</div>
+    ${loneSug.map(sugCard).join('')}
+    ${P.warnings.map(w => `<div class="warnbox">⚠ ${esc(w)}</div>`).join('')}
+    ${sec('rules', 'Rules', `${rules.map(([r, i]) => { const v = vio(r); return `<div class="rule-row${v.length ? ' bad' : ''}"><span>${esc(ruleText(toBe, r))}</span><span class="n">${v.length ? `${plural(v.reduce((n, e) => n + (e.weight || e.via.length || 1), 0), 'site')}` : ''}</span>${mode === 'asis' ? '' : `<button class="x" data-act="rule.del" data-i="${i}" title="Drop this rule">×</button>`}</div>`; }).join('')
+      || '<p class="mute" style="margin:0">No rules yet. Select a dependency line and forbid it.</p>'}
+      <p class="mute" style="font-size:13px;margin:6px 0 0">Default <b>${pol.default}</b>${pol.default === 'deny' ? `: only the ${nAllow} allow rules permit a dependency` : ''}.${E ? ` Enforced by <code>${esc(E.tool)}</code> (${esc(E.config)}).` : ''}</p>`)}
+    ${sec('tasks', 'Tasks', anyChange ? P.tasks.map(t => taskCard(t, P, per[t.key] || [])).join('') : `<p class="mute" style="margin:0">No changes yet, so no tasks. Edit the diagram${BASE === SAMPLE ? ', or choose <b>Apply demo edits</b> in the ⋯ menu' : ''}.</p>`)}
+    ${sec('decisions', 'Decisions', decT.map(t => threadHTML(t, true)).join('') || '<p class="mute" style="margin:0">Nothing waits for your choice.</p>')}
+    ${sec('questions', 'Questions', qT.map(t => threadHTML(t, true)).join('') || '<p class="mute" style="margin:0">No open threads outside the tasks. Comment on an item from its page.</p>')}
+    ${fold('done', `Done (${done.length})`, done.map(t => threadHTML(t, true)).join('') || '<p class="mute">No resolved threads.</p>')}
+    ${fold('changes', `Changes (${D.items.length})`, changesHTML())}
+    ${fold('check', 'Check against the code', verifyHTML())}
+    ${fold('text', 'Plan as text', planText(P))}
+    <div class="dsec" id="sec-edit"><h4>Edit the model</h4><ul class="plain"><li><button class="linkb" data-act="page.model">Types, packages, policy and the model as text</button></li>${Object.keys(toBe.sequences).length ? '<li><button class="linkb" data-act="page.seq">Sequences: add calls and participants</button></li>' : ''}<li><button class="linkb" data-act="page.glossary">Glossary: concepts and terms</button></li></ul></div>`;
+}
+let planFmtRaw = 'md';
+function planText(P) {
+  const f = v => `<button class="${planFmtRaw === v ? 'on' : ''}" data-act="plan.raw" data-v="${v}">${{md: 'Markdown', json: 'JSON'}[v]}</button>`;
+  return `<div class="row"><div class="seg">${f('md')}${f('json')}</div><div class="spacer"></div><button class="btn" data-act="plan.copy">Copy</button><button class="btn" data-act="plan.download">Download</button></div>
+    ${openSecs.has('text') ? `<pre class="raw mono">${esc(planFmtRaw === 'json' ? planJSON(P) : planMD(P))}</pre>` : ''}`;
+}
+function outlineHTML() {
+  const P = buildPlan(asIs, toBe, D), {loose} = threadPlaces(P), viol = violations(toBe).length;
+  const it = (id, label, n, cls) => `<div class="ol" data-sec="${id}">${label}<span class="n ${cls || ''}">${n ?? ''}</span></div>`;
+  return `<div class="mh">Contents</div>${it('intent', 'Intent')}${it('rules', 'Rules', viol ? viol : deniedRules(toBe).length, viol ? 'warn' : '')}${it('tasks', 'Tasks', P.tasks.length)}
+    ${it('decisions', 'Decisions', loose.filter(t => needs(t) === 'decision').length, 'warn')}${it('questions', 'Questions', loose.filter(t => needs(t) !== 'decision').length)}${it('done', 'Done', threads.filter(t => t.status !== 'open').length)}
+    ${it('changes', 'Changes', D.items.length)}${it('check', 'Check')}${it('edit', 'Edit the model')}
+    ${pending().length ? `<div class="mh" style="margin-top:12px">Review</div>${pending().map((s, i) => `<div class="ol" data-sug="${esc(s.id)}">Suggestion ${i + 1}<span class="n">${(s.ops || []).length}</span></div>`).join('')}` : ''}`;
+}
+$('outline').addEventListener('click', e => {
+  const o = e.target.closest('[data-sec],[data-sug]'); if (!o) return;
+  if (o.dataset.sug) return gotoSug(o.dataset.sug);
+  gotoSec(o.dataset.sec);
+});
+function toPlan() { if (sel || multi.length || page !== 'plan') { sel = null; multi = []; page = 'plan'; if (view === 'seq') renderSeq(); else applySel(); renderSide(); } }
+function gotoSec(id) {
+  toPlan();
+  const el = $('sec-' + id); if (!el) return;
+  const d = el.querySelector('details'); if (d && !d.open) d.open = true;
+  el.scrollIntoView({block: 'start', behavior: 'smooth'});
+}
+function flash(el) { if (!el) return; el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400); }
+function gotoSug(id) { toPlan(); flash($('sug-' + id)); }
+// Show a task in the plan; with a step or task key, open its composer.
+function showTask(key, compose) {
+  sel = null; multi = []; page = 'plan';
+  if (compose) composeKey = compose;
+  openSecs.add('t:' + key);
+  renderSide(); applySel();
+  flash($('task-' + key));
+  if (compose) $('c-new')?.focus();
+}
 function renderSide() {
-  const n = D.items.length;
-  const mine = threads.filter(t => needs(t) === 'decision').length, open = threads.filter(t => t.status === 'open').length;
-  const tabs = [['inspect', 'Inspect'], ['changes', `Changes<span class="count">${n}</span>`], ['plan', 'Plan'],
-    ['comments', `Comments${open ? `<span class="count"${mine ? ' style="background:#d97706;color:#fff"' : ''}>${open}</span>` : ''}`], ['model', 'Model'], ['verify', 'Verify']];
-  $('tabs').innerHTML = tabs.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('');
+  if (!D) return;
   // keep what the user is typing across live updates
   const keep = [...$('panel').querySelectorAll('textarea[id], input[id]')].map(x => [x.id, x.value, x === document.activeElement, x.selectionStart]);
-  $('panel').innerHTML = tab === 'inspect' ? inspector() : tab === 'changes' ? changesHTML() : tab === 'plan' ? planHTML() : tab === 'comments' ? commentsHTML() : tab === 'model' ? modelHTML() : verifyHTML();
+  const top = $('panel').scrollTop, was = $('panel').dataset.page;
+  const cur = multi.length || sel ? 'item:' + (multi.join('|') || anchorOf(sel)) : page;
+  $('panel').innerHTML = multi.length || sel ? itemPage() : page === 'model' ? modelPage() : page === 'seq' ? seqPage() : page === 'glossary' ? glossPage() : planDoc();
+  $('panel').dataset.page = cur;
+  if (cur === was) $('panel').scrollTop = top; else $('panel').scrollTop = 0;
   for (const [id, v, foc, pos] of keep) { const x = $(id); if (!x || (x.value && x.value !== v)) continue; x.value = v; if (foc) { x.focus(); try { x.setSelectionRange(pos, pos); } catch {} } }
+  $('outline').innerHTML = outlineHTML();
+  renderHeader();
 }
-$('tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) { tab = b.dataset.tab; renderSide(); } });
 
 function legend() {
   const d = mode === 'diff' ? `<span><i style="background:#16a34a"></i>added</span><span><i style="background:#d97706"></i>changed</span><span><i style="background:#dc2626"></i>removed</span>${view === 'seq' ? '<span><i style="background:#7c3aed"></i>moved</span>' : ''}` : '';
@@ -2570,7 +2905,7 @@ function renderFocus() {
   const need = view === 'types' && !visibleTypes();
   if (view === 'types' && seqFilter && !visibleTypes().ids.size) { $('needFocus').style.display = 'flex'; $('needFocus').firstElementChild.textContent = 'No type in this model matches a call in this sequence.'; return; }
   $('needFocus').style.display = need ? 'flex' : 'none';
-  if (need) $('needFocus').firstElementChild.innerHTML = `This model has ${Object.keys(toBe.types).length} types. Pick one or more components in <b>Focus component…</b>, or double-click a component in the Components view, to see their types and what they connect to.`;
+  if (need) $('needFocus').firstElementChild.innerHTML = `This model has ${Object.keys(toBe.types).length} types. Pick one or more components in <b>Focus</b>, or double-click a component in the Components view, to see their types and what they connect to.`;
 }
 $('focusIn').addEventListener('change', e => { const v = e.target.value.trim(); e.target.value = ''; if (v) setFocus([v], true); });
 $('chips').addEventListener('click', e => { const b = e.target.closest('[data-unfocus]'); if (!b) return; if (b.dataset.unfocus === '*') focus.clear(); else focus.delete(b.dataset.unfocus); setFocus([...focus]); });
@@ -2627,8 +2962,7 @@ function loadModel(j, name) {
   focus = new Set(); showExternal = false; seqFilter = ''; undoStack = []; sel = null; verifyStage = 0;
   positions = {components: {}, types: {}, glossary: {}}; viewports = {};
   curSeq = Object.keys(toBe.sequences)[0] || '';
-  view = Object.keys(toBe.types).length > BIG_TYPES ? 'components' : 'types'; mode = 'diff'; tab = 'inspect';
-  $('demoBtn').style.display = 'none';
+  view = Object.keys(toBe.types).length > BIG_TYPES ? 'components' : 'types'; mode = 'diff'; page = 'plan';
   $('hint').style.display = 'none';
   render(true);
 }
@@ -2643,7 +2977,6 @@ function loadTarget(j, name) {
 }
 let openAs = 'base';
 const readFile = f => f.text().then(t => (openAs === 'target' ? loadTarget : loadModel)(JSON.parse(t), f.name)).catch(err => alert(`${f.name}: ${err.message}`)).finally(() => openAs = 'base');
-$('openBtn').addEventListener('click', () => { openAs = 'base'; $('fileIn').click(); });
 $('fileIn').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) readFile(f); });
 document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('drop'); });
 document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('drop'); });
@@ -2655,14 +2988,15 @@ function saveTarget() {
 }
 
 // ---------- glossary view ----------
-function renderGloss() {
+function renderGloss() { withSugg(renderGloss0); }
+function renderGloss0() {
   const el = $('gloss'), M = mode === 'asis' ? asIs : toBe;
   if (!hasVocab(asIs) && !hasVocab(toBe)) {
     el.innerHTML = `<div class="callout" style="max-width:660px"><b>This model has no vocabulary yet.</b>
       <p>Each component can keep a <code>GLOSSARY.md</code> in its directory. Its front matter lists the concepts it owns (with extra terms), the concepts it uses from other components and the ones it must avoid. Below that, one <code>**Name**: definition</code> line per owned concept.</p>
       <pre class="raw mono">---\nowns:\n  Cart item: [basket]\nuses: [Order, SKU]\navoid: [Postgres]\n---\n\n**Cart item**: One product line in a cart, with quantity.</pre>
       <p>The extractor reads these files and counts where each concept's terms appear in identifiers, strings and comments. A component <i>leaks</i> a concept when it uses terms it should avoid, or terms owned by a component it may not depend on.</p>
-      <p>Add a concept in the inspector to start a target glossary; the plan then asks for the files.</p></div>`;
+      <p>To start a target glossary, click a component and add a concept on its page. The plan then asks for the files.</p></div>`;
     return;
   }
   const scope = (focus.size || seqFilter) ? visibleComps().ids : null, inScope = c => !scope || scope.has(c);
@@ -2723,54 +3057,571 @@ function select(s) {
     if (!multi.length && sel && anchorOf(sel) !== anchorOf(s)) multi = [anchorOf(sel)];
     const a = anchorOf(s);
     multi = multi.includes(a) ? multi.filter(x => x !== a) : [...multi, a];
-    sel = null; tab = 'inspect';
+    sel = null;
     if (view === 'seq') renderSeq(); else if (view === 'glossary' && glossMode === 'table') renderGloss(); else applySel();
     return renderSide();
   }
   multi = [];
   const redraw = view === 'components' && !focus.size && Object.keys(toBe.components).length > BIG_COMPS && (s?.kind === 'comp' || sel?.kind === 'comp');
-  sel = s; tab = 'inspect';
+  sel = s;
   if (view === 'seq') renderSeq(); else if (view === 'glossary' && glossMode === 'table') renderGloss(); else if (redraw) renderCy(); else applySel();
   renderSide();
 }
 
+// ---------- the plan, computed once per diff and thread change ----------
+let planTick = 0;
+function curPlan() {
+  const c = curPlan.c;
+  const tick = threadsVer + ':' + threads.length + ':' + planTick;
+  if (c && c.D === D && c.tick === tick && c.toBe === toBe) return c.P;
+  const P = buildPlan(asIs, toBe, D);
+  curPlan.c = {D, tick, toBe, P};
+  return P;
+}
+
+// ---------- @-mentions: @[Label](anchor) in comments ----------
+marked.use({extensions: [{name: 'mention', level: 'inline',
+  start(src) { const i = src.indexOf('@['); return i < 0 ? undefined : i; },
+  tokenizer(src) { const m = /^@\[([^\]\n]{1,120})\]\(([^)\s]{1,300})\)/.exec(src); if (m) return {type: 'mention', raw: m[0], label: m[1], anchor: m[2]}; },
+  renderer(t) { return `<span class="mention" data-anchor="${esc(t.anchor)}" title="${esc(t.anchor)}">@${esc(t.label)}</span>`; }}]});
+const AC = {ta: null, start: 0, items: [], i: 0};
+function acCands(q) {
+  q = q.toLowerCase();
+  const out = [];
+  for (const t of curPlan().tasks) out.push({kind: 'task', label: `${t.id} ${t.title}`.slice(0, 70), anchor: 'task:' + t.key, hay: `${t.id} ${t.title}`.toLowerCase()});
+  for (const [id, c] of Object.entries({...asIs.components, ...toBe.components})) out.push({kind: 'component', label: c.name, anchor: 'comp:' + id, r: c.path, hay: (c.name + ' ' + (c.path || '')).toLowerCase()});
+  for (const [id, t] of Object.entries({...asIs.types, ...toBe.types})) out.push({kind: 'type', label: t.name, anchor: 'type:' + id, r: cname(toBe, t.comp), hay: (t.name + ' ' + id).toLowerCase()});
+  const sc = x => !q ? (x.kind === 'task' ? 0 : 1) : x.label.toLowerCase().startsWith(q) ? 0 : x.hay.includes(q) ? 1 : 9;
+  return out.map(x => [sc(x), x]).filter(([s]) => s < 9).sort((a, b) => a[0] - b[0] || a[1].label.length - b[1].label.length).slice(0, 8).map(([, x]) => x);
+}
+function acUpdate(ta) {
+  const p = ta.selectionStart, m = /(^|[\s(])@([^\s@\[\]()]{0,40})$/.exec(ta.value.slice(0, p));
+  if (!m) return acHide();
+  AC.ta = ta; AC.start = p - m[2].length - 1; AC.items = acCands(m[2]); AC.i = 0;
+  if (!AC.items.length) return acHide();
+  const el = $('ac'), r = ta.getBoundingClientRect();
+  el.innerHTML = AC.items.map((x, i) => `<div class="ac-i${i ? '' : ' on'}" data-i="${i}"><span class="mute" style="font-size:12px;width:66px;flex:none">${x.kind}</span><span>${esc(x.label)}</span><span class="r">${esc(x.r || '')}</span></div>`).join('');
+  el.hidden = false;
+  const h = el.offsetHeight;
+  el.style.left = Math.max(4, Math.min(r.left, innerWidth - 330)) + 'px';
+  el.style.top = (r.bottom + 4 + h > innerHeight ? r.top - h - 4 : r.bottom + 4) + 'px';
+}
+function acHide() { $('ac').hidden = true; AC.ta = null; }
+function acPick(i) {
+  const x = AC.items[i], ta = AC.ta; if (!x || !ta) return;
+  const p = ta.selectionStart, ins = `@[${x.label.replace(/[\[\]\n]/g, '')}](${x.anchor}) `;
+  ta.value = ta.value.slice(0, AC.start) + ins + ta.value.slice(p);
+  const c = AC.start + ins.length; ta.focus(); ta.setSelectionRange(c, c); acHide();
+}
+function acKey(e) {
+  if ($('ac').hidden || e.target !== AC.ta) return false;
+  const n = AC.items.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { AC.i = (AC.i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n; [...$('ac').children].forEach((c, i) => c.classList.toggle('on', i === AC.i)); }
+  else if (e.key === 'Enter' || e.key === 'Tab') acPick(AC.i);
+  else if (e.key === 'Escape') acHide();
+  else return false;
+  e.preventDefault(); e.stopPropagation(); return true;
+}
+$('ac').addEventListener('mousedown', e => { const x = e.target.closest('[data-i]'); if (x) { e.preventDefault(); acPick(+x.dataset.i); } });
+$('panel').addEventListener('focusout', () => setTimeout(() => { if (AC.ta && document.activeElement !== AC.ta) acHide(); }, 150));
+// The diagram elements an anchor names.
+function cyEl(a) {
+  const [k, ...r] = a.split(':'), x = r.join(':');
+  const ids = {type: ['t:' + x], comp: ['c:' + x], cedge: ['ce:' + x, 'r:' + x, 'sq:' + x], concept: ['k:' + x], tedge: ['e:' + x], leak: ['g:' + x]}[k] || [];
+  if (k === 'group') return groupMembers(a).reduce((c, m) => c.union(cyEl(m)), cy.collection());
+  return ids.reduce((c, id) => c.union(cy.getElementById(id)), cy.collection());
+}
+function hlAnchor(a, on) {
+  if (a.startsWith('task:')) return $('task-' + a.slice(5))?.classList.toggle('flash', on);
+  if (view !== 'seq') cyEl(a)[on ? 'addClass' : 'removeClass']('hl');
+}
+function gotoMention(a) { if (a.startsWith('task:')) return showTask(a.slice(5)); gotoAnchor(a); }
+// Where a plan task shows in the diagram.
+const taskAnchor = key => { const [k, ...r] = key.split(':'), x = r.join(':'); return k === 'dep' ? 'cedge:' + x : k === 'glossary' ? 'gcomp:' + x : key; };
+function showInDiagram(a) {
+  const [k, ...r] = a.split(':'), x = r.join(':');
+  if (k === 'seq') { view = 'seq'; curSeq = x; return render(); }
+  if (k === 'rules') { view = 'components'; return render(); }
+  if (k === 'gcomp') { view = 'glossary'; render(); return hlFlash('comp:' + x); }
+  const want = {type: 'types', tedge: 'types', comp: view === 'glossary' ? 'glossary' : 'components', cedge: 'components', concept: 'glossary', leak: 'glossary'}[k];
+  if (want) view = want;
+  if (k === 'type') { const c = (toBe.types[x] || asIs.types[x])?.comp; if (c && !visibleTypes()?.ids.has(x)) focus.add(c); }
+  render();
+  hlFlash(a);
+}
+function hlFlash(a) {
+  if (view === 'seq' || $('cy').style.visibility === 'hidden') return;
+  const el = cyEl(a);
+  if (!el.length) return toast('Not drawn in this view. Check the focus and the View settings.');
+  cy.animate({center: {eles: el}, duration: 300});
+  el.addClass('hl'); setTimeout(() => el.removeClass('hl'), 1800);
+}
+
+// ---------- graph snapshots: what a comment on a selection was looking at ----------
+const anchorOfNode = n => ({type: 'type:', comp: 'comp:', concept: 'concept:'}[n.data('sk')] || '') + n.data('sid');
+function nodeName(n) {
+  const sk = n.data('sk'), id = n.data('sid');
+  return sk === 'type' ? (toBe.types[id] || asIs.types[id])?.name || id : sk === 'concept' ? conceptName(toBe, id) : viewComp(id)?.name || id;
+}
+function snapshotFor(key) {
+  const anchors = sel && key === anchorOf(sel) ? [key] : multi.length && key === groupKey(multi) ? multi : null;
+  if (!anchors || view === 'seq' || $('cy').style.visibility === 'hidden') return;
+  let picked = cy.collection();
+  for (const a of anchors) cyEl(a).forEach(e => { picked = picked.union(e.isEdge() ? e.connectedNodes() : e); });
+  picked = picked.filter(n => !n.isParent() && n.id() !== '__ghost').slice(0, 20);
+  if (!picked.length) return;
+  const nb = picked.neighborhood('node').filter(n => !n.isParent() && !picked.has(n)).sort((a, b) => b.degree() - a.degree());
+  const room = Math.max(0, 12 - picked.length), shown = picked.union(nb.slice(0, room));
+  const ST = ['added', 'removed', 'changed'], CLS = ['added', 'removed', 'violation', 'rule', 'leak'];
+  return {view, mode, focus: [...focus], filters: {hideLeaves, external: showExternal, seqFilter, glossMode},
+    nodes: shown.map(n => ({id: anchorOfNode(n), label: nodeName(n), kind: n.data('sk'), color: n.data('bg') || n.parent().data('bg') || '#ffffff',
+      st: ST.find(c => n.hasClass(c)) || '', sel: picked.has(n), x: Math.round(n.position('x')), y: Math.round(n.position('y'))})),
+    edges: cy.edges().filter(e => shown.has(e.source()) && shown.has(e.target()) && !e.hasClass('cochange'))
+      .map(e => ({s: anchorOfNode(e.source()), t: anchorOfNode(e.target()), cls: [...CLS.filter(c => e.hasClass(c)), e.data('kind') || ''].filter(Boolean).join(' ')})),
+    more: nb.length - Math.min(nb.length, room), at: nowStamp()};
+}
+function snapSVG(s) {
+  const N = (s.nodes || []).filter(n => Number.isFinite(n.x) && Number.isFinite(n.y)); if (!N.length) return '';
+  const xs = N.map(n => n.x), ys = N.map(n => n.y);
+  const span = Math.max(Math.max(...xs) - Math.min(...xs), (Math.max(...ys) - Math.min(...ys)) * 3.6, 360);
+  const k = span / 520, h = 28 * k, lab = n => { const l = String(n.label || ''); return l.length > 24 ? l.slice(0, 23) + '…' : l; };
+  const bw = n => lab(n).length * 7 * k + 18 * k;
+  const x0 = Math.min(...N.map(n => n.x - bw(n) / 2)) - 8 * k, x1 = Math.max(...N.map(n => n.x + bw(n) / 2)) + 8 * k;
+  const y0 = Math.min(...ys) - h, y1 = Math.max(...ys) + h, by = Object.fromEntries(N.map(n => [n.id, n]));
+  const col = c => /violation|rule|removed|leak/.test(c) ? 2 : /added/.test(c) ? 1 : 0, COLS = ['#94a3b8', '#16a34a', '#dc2626'];
+  const clip = (n, dx, dy) => { const t = Math.min(bw(n) / 2 / (Math.abs(dx) || 1e-9), h / 2 / (Math.abs(dy) || 1e-9)); return [n.x + dx * t, n.y + dy * t]; };
+  let o = `<svg viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg"><defs>${COLS.map((c, i) => `<marker id="snapA${i}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="${c}"/></marker>`).join('')}</defs>`;
+  for (const e of s.edges || []) {
+    const a = by[e.s], b = by[e.t]; if (!a || !b || a === b) continue;
+    const [sx, sy] = clip(a, b.x - a.x, b.y - a.y), [tx, ty] = clip(b, a.x - b.x, a.y - b.y), c = col(e.cls || '');
+    o += `<line x1="${sx}" y1="${sy}" x2="${tx}" y2="${ty}" stroke="${COLS[c]}" stroke-width="${(c ? 2 : 1.3) * k}" ${/removed|rule|implements/.test(e.cls) ? `stroke-dasharray="${5 * k} ${3 * k}"` : ''} marker-end="url(#snapA${c})"/>`;
+  }
+  for (const n of N) {
+    const w = bw(n), stc = n.sel ? '#2563eb' : {added: '#16a34a', removed: '#dc2626', changed: '#d97706'}[n.st] || '#64748b';
+    o += `<g opacity="${n.sel ? 1 : .85}"><rect x="${n.x - w / 2}" y="${n.y - h / 2}" width="${w}" height="${h}" rx="${5 * k}" fill="${esc(/^#[0-9a-f]{3,8}$/i.test(n.color) ? n.color : '#ffffff')}" stroke="${stc}" stroke-width="${(n.sel ? 2.4 : 1.1) * k}" ${n.st === 'removed' ? `stroke-dasharray="${4 * k} ${3 * k}"` : ''}/>`
+      + `<text x="${n.x}" y="${n.y + 4 * k}" font-size="${12 * k}" text-anchor="middle" fill="#0f172a" font-family="-apple-system,Inter,sans-serif"${n.sel ? ' font-weight="600"' : ''}>${esc(lab(n))}</text></g>`;
+  }
+  return o + '</svg>';
+}
+function snapHTML(t) {
+  const s = t.snapshot, sl = (s.nodes || []).filter(n => n.sel).map(n => `<b>${esc(n.label)}</b>`);
+  const bits = [{components: 'Components', types: 'Types', glossary: 'Glossary'}[s.view] || s.view, {asis: 'As-is', tobe: 'To-be', diff: 'Diff', sugg: 'With suggestion'}[s.mode] || s.mode];
+  const f = s.filters || {};
+  if (s.focus?.length) bits.push(`focus on ${s.focus.length}`);
+  if (f.hideLeaves) bits.push('leaves hidden');
+  if (f.external) bits.push('external shown');
+  if (f.seqFilter) bits.push('sequence ' + f.seqFilter);
+  if (s.more) bits.push(`+${s.more} more`);
+  return `<div class="snap" title="Open this view">${snapSVG(s)}<div class="snapbar"><span>On ${sl.slice(0, 3).join(' + ')}${sl.length > 3 ? ` + ${sl.length - 3}` : ''} · ${esc(bits.filter(Boolean).join(' · '))}</span><button class="linkb" data-act="snap.open">⤢ Open this view</button></div></div>`;
+}
+const selOf = a => { const [k, ...r] = a.split(':'); return k === 'msg' ? {kind: 'msg', seq: r[0], id: r.slice(1).join(':')} : k === 'leak' ? {kind: 'comp', id: r[0]} : {kind: k, id: r.join(':')}; };
+function openSnapshot(id) {
+  const t = threads.find(x => x.id === id), s = t?.snapshot; if (!s) return;
+  view = ['components', 'types', 'glossary'].includes(s.view) ? s.view : 'components';
+  mode = ['asis', 'tobe', 'diff'].includes(s.mode) ? s.mode : s.mode === 'sugg' && pending().length ? 'sugg' : 'diff';
+  focus = new Set((s.focus || []).filter(c => toBe.components[c] || asIs.components[c]));
+  const f = s.filters || {};
+  hideLeaves = !!f.hideLeaves; showExternal = !!f.external; seqFilter = f.seqFilter || ''; glossMode = f.glossMode || 'map';
+  localStorage.setItem('archplan.hideLeaves', hideLeaves ? '1' : '0');
+  positions = {components: {}, types: {}, glossary: {}}; viewports = {};
+  const g = groupMembers(t.anchor);
+  if (g.length) { multi = g; sel = null; } else { multi = []; sel = selOf(t.anchor); }
+  render(true);
+}
+
+// ---------- suggestions from Claude ----------
+const SUG = {off: false, list: [], picked: {}, prev: {}, active: null, sig: ''};
+const pending = () => SUG.list.filter(s => s.status === 'pending');
+const pickedOps = s => [...(SUG.picked[s.id] || [])].sort((a, b) => a - b);
+const prevKey = s => s.id + ':' + pickedOps(s).join(',');
+async function loadSuggestions() {
+  if (!collab || SUG.off) return;
+  let d;
+  try {
+    const r = await fetch('/api/suggestions');
+    if (r.status === 404) { SUG.off = true; return; }
+    if (!r.ok) return;
+    d = await r.json();
+  } catch { return; }
+  const sig = JSON.stringify(d.suggestions || []);
+  if (sig === SUG.sig) return;
+  SUG.sig = sig; SUG.list = d.suggestions || []; SUG.prev = {};
+  for (const s of pending()) { SUG.picked[s.id] ||= new Set((s.ops || []).map((_, i) => i)); fetchPreview(s); }
+  if (mode === 'sugg' && !pending().length) { mode = 'diff'; return render(); }
+  renderSide();
+}
+function refreshPreviews() { SUG.prev = {}; pending().forEach(fetchPreview); }
+async function fetchPreview(s) {
+  const ops = pickedOps(s), key = prevKey(s);
+  if (SUG.prev[key] || !ops.length) return;
+  SUG.prev[key] = {loading: true};
+  try {
+    const r = await fetch(`/api/suggestions/${encodeURIComponent(s.id)}/preview?ops=${ops.join(',')}`), j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(r.status === 409 ? `a change no longer applies${j.error ? ' (' + j.error + ')' : ''}` : j.error || 'error ' + r.status);
+    const m = parsed(j.target).m, Dp = diffModels(asIs, m);
+    SUG.prev[key] = {model: m, D: Dp, tasks: buildPlan(asIs, m, Dp).tasks.length, viol: violations(m).length};
+  } catch (err) { SUG.prev[key] = {err: err.message}; }
+  renderSide();
+  if (mode === 'sugg' && activeSug() === s) render();
+}
+const activeSug = () => pending().find(s => s.id === SUG.active) || pending()[0];
+const sugPreview = () => { const s = activeSug(); return s && SUG.prev[prevKey(s)]; };
+function opLine(o) {
+  const C = id => id === '*' ? 'any component' : cname(toBe, id) || id, Ty = id => toBe.types[id] ? qname(toBe, id) : id;
+  switch (o.op) {
+    case 'add_component': return ['+ component', 'add', `${o.name || o.id}${o.path ? ' (' + o.path + ')' : ''}${o.layer ? ', layer ' + o.layer : ''}`];
+    case 'remove_component': return ['− component', 'rem', C(o.id)];
+    case 'set_component': {
+      const ch = ['name', 'path', 'layer'].filter(k => k in o).map(k => `${k} ${o[k]}`);
+      if ('doc' in o) ch.push('doc');
+      return [o.name && ch.length === 1 ? '~ rename' : '~ component', 'chg', `${C(o.id)}${ch.length ? ': ' + ch.join(', ') : ''}`];
+    }
+    case 'move_type': return ['~ move', 'chg', `type ${Ty(o.type)}: ${C(toBe.types[o.type]?.comp)} → ${C(o.to)}`];
+    case 'rename_type': return ['~ rename', 'chg', `type ${Ty(o.type)} to ${o.name}`];
+    case 'set_doc': return ['~ doc', 'chg', `of type ${Ty(o.type)}`];
+    case 'forbid': return ['⊘ forbid', 'rem', `${C(o.from)} → ${C(o.to)}${o.note ? ': ' + o.note : ''}`];
+    case 'permit': return ['+ allow', 'add', `${C(o.from)} → ${C(o.to)}${o.note ? ': ' + o.note : ''}`];
+    case 'remove_dependency': return ['− line', 'rem', `${C(o.from)} → ${C(o.to)}`];
+    case 'add_dependency': return ['+ line', 'add', `${C(o.from)} → ${C(o.to)}`];
+  }
+  const {op, ...rest} = o;
+  return ['? ' + op, 'chg', JSON.stringify(rest)];
+}
+function effText(s) {
+  if (!pickedOps(s).length) return 'Nothing selected.';
+  const pv = SUG.prev[prevKey(s)];
+  if (!pv || pv.loading) return 'Working out the effect on the plan…';
+  if (pv.err) return `No preview: ${pv.err}.`;
+  const cur = curPlan().tasks.length, d = pv.tasks - cur, vd = pv.viol - violations(toBe).length;
+  let t = d > 0 ? `Plan grows by ${plural(d, 'task')}` : d < 0 ? `Plan shrinks by ${plural(-d, 'task')}` : `Plan keeps ${plural(cur, 'task')}`;
+  if (vd > 0) t += `; ${plural(vd, 'new rule violation')}`; else if (vd < 0) t += `; fixes ${plural(-vd, 'violation')}`;
+  return t + '.';
+}
+function sugCard(s) {
+  const P = SUG.picked[s.id] ||= new Set((s.ops || []).map((_, i) => i)), ops = s.ops || [];
+  return `<div class="sug" id="sug-${esc(s.id)}"><div class="sug-h">Suggested change to the target<span class="spacer"></span><span class="mute" style="font-weight:400;font-size:13px">${esc(relTime(s.created))}</span></div>
+    ${s.note ? `<div class="note">${md(s.note)}</div>` : ''}
+    ${ops.map((o, i) => { const [k, c, t] = opLine(o); return `<label class="sop"><input type="checkbox" data-sug="${esc(s.id)}" data-i="${i}"${P.has(i) ? ' checked' : ''}><span class="k k-${c}">${esc(k)}</span><span>${esc(t)}</span></label>`; }).join('')}
+    <div class="acts"><button class="btn primary" data-act="sug.accept" data-id="${esc(s.id)}"${P.size ? '' : ' disabled'}>Accept ${P.size} of ${ops.length}</button><button class="btn" data-act="sug.reject" data-id="${esc(s.id)}">Reject</button><button class="btn" data-act="sug.show" data-id="${esc(s.id)}" title="Show the target with this suggestion in the diagram">Show in diagram</button><span class="eff">${esc(effText(s))}</span></div></div>`;
+}
+async function decideSug(id, how) {
+  const s = SUG.list.find(x => x.id === id), ops = s ? pickedOps(s) : [];
+  try { await api('POST', `/api/suggestions/${encodeURIComponent(id)}/${how}`, how === 'accept' ? {ops} : {}); }
+  catch (err) { SUG.sig = ''; loadSuggestions(); return toast(`Could not ${how} the suggestion (${err.message}). It may be decided already, or a change no longer applies.`); }
+  if (how === 'accept') await reloadTarget('suggestion');
+  SUG.sig = ''; await loadSuggestions();
+  toast(how === 'accept' ? `Accepted ${plural(ops.length, 'change')}. See Diff; Undo reverts it.` : 'Rejected the suggestion.');
+}
+// The canvas in "With suggestion" mode: the target with the suggestion applied,
+// drawn as a diff against the as-is model.
+function withSugg(fn) {
+  if (mode !== 'sugg') return fn();
+  const pv = sugPreview(), t = toBe, d = D;
+  if (pv?.model) { toBe = pv.model; D = pv.D; }
+  mode = 'diff';
+  try { return fn(); } finally { toBe = t; D = d; mode = 'sugg'; }
+}
+// Items whose state the suggestion changes: dashed green (or red when it removes them).
+function markSugg() {
+  const pv = sugPreview(); if (mode !== 'sugg' || !pv?.D) return;
+  const nk = {type: 'type', comp: 'comp', concept: 'concept'}, real = new Set(deniedRules(toBe).map(r => r.from + '->' + r.to));
+  cy.nodes().forEach(n => { const m = nk[n.data('sk')], id = n.data('sid'); if (m && pv.D[m][id] && pv.D[m][id] !== D[m][id]) n.addClass('sugg'); });
+  cy.edges().forEach(e => {
+    const id = e.id(), sid = e.data('sid'), m = id.startsWith('ce:') ? 'cedge' : id.startsWith('e:') ? 'edge' : null;
+    if ((m && pv.D[m][sid] && pv.D[m][sid] !== D[m][sid]) || (id.startsWith('r:') && !real.has(sid))) e.addClass('sugg');
+  });
+}
+
+// ---------- what Claude is doing ----------
+const ACT = {d: null};
+async function loadActivity() {
+  if (!collab) return;
+  try { const r = await fetch('/api/activity'); if (r.ok) ACT.d = await r.json(); } catch {}
+  renderAgent();
+}
+function relTime(at) {
+  const t = Date.parse(at); if (!t) return '';
+  const s = (Date.now() - t) / 1000;
+  return s < 45 ? 'just now' : s < 90 ? '1 min ago' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : new Date(t).toLocaleDateString();
+}
+function renderAgent() {
+  const p = $('agentPill'), d = ACT.d;
+  if (!d?.at) { p.hidden = true; return; }
+  const live = Date.now() - Date.parse(d.at) < 120000;
+  p.hidden = false;
+  p.innerHTML = `<span class="dot${live ? ' live' : ''}"></span>Claude: ${esc(d.summary || d.tool || 'working')} · ${esc(relTime(d.at))}`;
+  p.title = `${d.tool ? 'Tool: ' + d.tool + '. ' : ''}${d.task ? 'Task ' + d.task + '. ' : ''}${d.thread || d.task ? 'Click to show it.' : ''}`;
+}
+$('agentPill').addEventListener('click', () => {
+  const d = ACT.d || {};
+  if (d.task) { const t = curPlan().tasks.find(x => x.key === d.task || x.id === d.task); if (t) return showTask(t.key); }
+  if (d.thread) { const t = threads.find(x => x.id === d.thread); if (t) { if (t.status !== 'open') openSecs.add('done'); toPlan(); renderSide(); return flash($('th-' + t.id)); } }
+});
+setInterval(renderAgent, 30000);
+
+// ---------- overlays: git history and fan-in/out on the component view ----------
+const HOT = {state: 'idle', why: '', d: null}, OV = {max: 0, pairs: 0};
+let overlay = localStorage.getItem('archplan.overlay') || 'none';
+const OVERLAYS = [['none', 'None'], ['churn', 'Change frequency'], ['cochange', 'Co-change'], ['fanin', 'Fan-in'], ['fanout', 'Fan-out']];
+const RAMP = ['#f1f5f9', '#fef9c3', '#fde68a', '#fdba74', '#fb923c', '#f87171'];
+const ovNeedsGit = o => o === 'churn' || o === 'cochange';
+const ovOn = () => view === 'components' && overlay !== 'none' && !(ovNeedsGit(overlay) && HOT.state !== 'ok');
+const heat = (v, max) => !v || !max ? RAMP[0] : RAMP[Math.min(5, 1 + Math.floor(Math.log(1 + v) / Math.log(1 + max) * 4.999))];
+async function loadHotspots() {
+  if (!collab) { HOT.state = 'err'; HOT.why = 'Needs git: open a project with archplan up.'; return renderOverlayUI(); }
+  HOT.state = 'loading'; renderOverlayUI();
+  try {
+    const r = await fetch('/api/hotspots?since=365'), j = await r.json().catch(() => ({}));
+    if (r.ok && j.components) { HOT.d = j; HOT.state = 'ok'; }
+    else { HOT.state = 'err'; HOT.why = r.status === 404 && j.error && j.error !== 'not found' ? j.error : r.status === 404 ? 'This archplan server cannot read the git history.' : j.error || `Error ${r.status}.`; }
+  } catch (err) { HOT.state = 'err'; HOT.why = err.message; }
+  renderOverlayUI();
+  if (ovNeedsGit(overlay) && view === 'components') renderCy();
+  if (sel?.kind === 'comp') renderSide();
+}
+function addCochange() {
+  OV.pairs = 0;
+  if (!ovOn() || overlay !== 'cochange') return;
+  {
+    const add = [];
+    for (const p of HOT.d.pairs || []) {
+      const a = cy.getElementById('c:' + p.a), b = cy.getElementById('c:' + p.b);
+      if (!a.length || !b.length || a === b) continue;
+      add.push({group: 'edges', data: {id: 'cc:' + p.a + '|' + p.b, source: a.id(), target: b.id(), label: `${p.together}×${p.dependency ? '' : ' · no import'}`, sk: 'pair', sid: p.a + '|' + p.b,
+        w: 1.2 + 3 * (p.degree || 0) + (p.dependency ? 0 : 2)}, classes: 'cochange' + (p.dependency ? '' : ' nodep')});
+      if (add.length >= 60) break;
+    }
+    cy.add(add); OV.pairs = add.length;
+  }
+}
+function applyOverlay() {
+  OV.max = 0;
+  if (!ovOn() || overlay === 'cochange') return;
+  let f;
+  if (overlay === 'churn') f = id => HOT.d.components?.[id]?.commits || 0;
+  else {
+    const n = {};
+    for (const e of compEdges(mode === 'asis' ? asIs : toBe).values()) if (e.from !== e.to) { const k = overlay === 'fanin' ? e.to : e.from; n[k] = (n[k] || 0) + 1; }
+    f = id => n[id] || 0;
+  }
+  const nodes = cy.nodes('.cmp');
+  OV.max = Math.max(0, ...nodes.map(n => f(n.data('sid'))));
+  nodes.forEach(n => n.data('bg', heat(f(n.data('sid')), OV.max)));
+}
+function renderOverlayUI() {
+  const why = o => !ovNeedsGit(o) || HOT.state === 'ok' ? '' : HOT.state === 'err' ? HOT.why : 'Reading the git history…';
+  $('ovMenu').innerHTML = OVERLAYS.map(([k, l]) => { const w = why(k); return `<button class="mi ${overlay === k ? 'on' : 'off'}" data-ov="${k}"${w ? ' disabled' : ''}><span>${l}${w ? `<span class="why">${esc(w)}</span>` : ''}</span></button>`; }).join('')
+    + (view !== 'components' ? '<div class="sep"></div><div class="mute" style="padding:4px 9px;font-size:13px">Overlays show in the Components view.</div>' : '');
+  $('ovBtn').textContent = overlay === 'none' ? 'Overlay ▾' : `Overlay: ${OVERLAYS.find(o => o[0] === overlay)?.[1].toLowerCase()} ▾`;
+  $('ovBtn').classList.toggle('on', overlay !== 'none');
+  const el = $('ovLegend');
+  el.hidden = !ovOn() || $('cy').style.visibility === 'hidden';
+  if (el.hidden) return;
+  const line = (w, o) => `<svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#7c3aed" stroke-dasharray="5 3" stroke-width="${w}" opacity="${o}"/></svg>`;
+  el.innerHTML = overlay === 'cochange'
+    ? `<b>Co-change</b>, last ${HOT.d.since_days} days<br>${line(1.5, .6)} changed in the same commits (n×)<br>${line(4, 1)} no import between them: hidden coupling<br>${plural(OV.pairs, 'pair')} drawn. Click a line for details.`
+    : `<b>${{churn: 'Change frequency', fanin: 'Fan-in', fanout: 'Fan-out'}[overlay]}</b>: ${{churn: `commits in the last ${HOT.d?.since_days} days`, fanin: 'components that use it', fanout: 'components it uses'}[overlay]}
+      <div class="ramp" style="background:linear-gradient(90deg,${RAMP.join(',')})"></div><div style="display:flex"><span>0</span><span class="spacer"></span><span>${OV.max}</span></div>
+      ${overlay === 'churn' ? `<span>${HOT.d.commits} commits read${HOT.d.skipped ? `, ${HOT.d.skipped} large ones skipped` : ''}.</span>` : ''}`;
+}
+$('ovMenu').addEventListener('click', e => {
+  const b = e.target.closest('[data-ov]'); if (!b || b.disabled) return;
+  closeMenus(); setOverlay(b.dataset.ov);
+});
+function setOverlay(o) {
+  overlay = o; localStorage.setItem('archplan.overlay', o);
+  if (o !== 'none' && view !== 'components') { view = 'components'; sel = null; }
+  render();
+}
+
+// ---------- header menus and the command palette ----------
+const download = (name, text, type = 'text/plain') => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], {type})); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); };
+const copyText = (text, what) => navigator.clipboard?.writeText(text).then(() => toast(`Copied ${what}.`), () => toast('Could not copy to the clipboard.'));
+function viewLink() {
+  const p = new URLSearchParams({view, mode: mode === 'sugg' ? 'diff' : mode});
+  if (focus.size) p.set('focus', [...focus].join(','));
+  if (sel) p.set('sel', anchorOf(sel));
+  return location.origin + location.pathname + location.search + '#' + p;
+}
+function applyHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  if (!p.has('view')) return;
+  if (['components', 'types', 'seq', 'glossary'].includes(p.get('view'))) view = p.get('view');
+  if (['asis', 'tobe', 'diff'].includes(p.get('mode'))) mode = p.get('mode');
+  if (p.get('focus')) setFocusIds(p.get('focus').split(','));
+  if (p.get('sel')) sel = selOf(p.get('sel'));
+  history.replaceState(null, '', location.pathname + location.search);
+  render(true);
+}
+const setFocusIds = ids => { focus = new Set(ids.filter(id => toBe.components[id] || asIs.components[id])); positions = {components: {}, types: {}, glossary: {}}; viewports = {}; };
+const shareItems = () => {
+  const noD2 = view === 'glossary' && 'The glossary view has no D2 rendering.';
+  return [{head: 'Plan'},
+    {label: 'Copy the plan as Markdown', run: () => copyText(planMD(curPlan()), 'the plan as Markdown')},
+    {label: 'Copy the plan as JSON', run: () => copyText(planJSON(curPlan()), 'the plan as JSON')},
+    {label: 'Download plan.md', run: () => download('plan.md', planMD(curPlan()))},
+    {label: 'Download plan.json', run: () => download('plan.json', planJSON(curPlan()))},
+    {head: 'Diagram'},
+    {label: 'Copy this view as D2', run: () => copyText(toD2(), 'the view as D2'), off: noD2},
+    {label: 'Download this view as D2', run: () => download(view + '.d2', toD2()), off: noD2},
+    {label: 'Copy a link to this view', run: () => copyText(viewLink(), 'a link to this view')},
+    {head: 'Model'},
+    {label: 'Download the target model', run: saveTarget}];
+};
+const curTheme = () => localStorage.getItem('archplan.theme') || 'auto';
+const moreItems = () => [
+  {label: 'Open model file…', run: () => { openAs = 'base'; $('fileIn').click(); }},
+  {label: 'Open target file…', run: () => { openAs = 'target'; $('fileIn').click(); }},
+  {label: 'Export from code', run: exportFromCode, off: !collab ? 'Needs a project opened with archplan up.' : !collab.can_export && 'Set "export" in .archplan/config.json first.'},
+  {label: 'Reset target', run: resetTarget},
+  {label: 'Edit the model', run: () => actions['page.model']()},
+  ...(BASE === SAMPLE ? [{label: 'Apply demo edits', run: applyDemo}] : []),
+  '-', {head: 'Theme'},
+  ...[['auto', 'Follow the system'], ['dark', 'Dark'], ['light', 'Light']].map(([k, l]) => ({label: l, on: curTheme() === k, run: () => { localStorage.setItem('archplan.theme', k); applyTheme(); }})),
+  '-',
+  {label: 'Keyboard shortcuts', key: '?', run: () => { showHelp(true); $('keys').scrollIntoView(); }},
+  {label: 'Help', run: () => showHelp(true)}];
+const menuItems = {};
+function openMenu(id, items) {
+  const was = !$(id).hidden; closeMenus(); if (was) return;
+  menuItems[id] = items;
+  $(id).innerHTML = items.map((it, i) => it === '-' ? '<div class="sep"></div>' : it.head ? `<div class="mh">${it.head}</div>`
+    : `<button class="mi${it.on == null ? '' : it.on ? ' on' : ' off'}" data-mi="${i}"${it.off ? ' disabled' : ''}><span>${esc(it.label)}${typeof it.off === 'string' ? `<span class="why">${esc(it.off)}</span>` : ''}</span>${it.key ? `<span class="r">${it.key}</span>` : ''}</button>`).join('');
+  $(id).hidden = false; fitMenu($(id));
+}
+// A menu opens under its button, and moves left when it would leave the window.
+function fitMenu(m) {
+  m.style.left = m.style.right = '';
+  const r = m.getBoundingClientRect();
+  if (r.right > innerWidth - 8) { m.style.left = 'auto'; m.style.right = '0'; }
+  if (m.getBoundingClientRect().left < 8) { m.style.right = 'auto'; m.style.left = (8 - m.parentNode.getBoundingClientRect().left) + 'px'; }
+}
+function closeMenus() { ['shareMenu', 'moreMenu', 'viewMenu', 'ovMenu'].forEach(m => $(m).hidden = true); }
+document.addEventListener('click', e => { if (!e.target.closest('.menu-wrap')) closeMenus(); });
+for (const m of ['shareMenu', 'moreMenu']) $(m).addEventListener('click', e => { const b = e.target.closest('[data-mi]'); if (!b || b.disabled) return; closeMenus(); menuItems[m][+b.dataset.mi].run(); });
+$('shareBtn').addEventListener('click', () => openMenu('shareMenu', shareItems()));
+$('moreBtn').addEventListener('click', () => openMenu('moreMenu', moreItems()));
+$('viewBtn').addEventListener('click', () => { const was = !$('viewMenu').hidden; closeMenus(); $('viewMenu').hidden = was; if (!was) fitMenu($('viewMenu')); });
+$('ovBtn').addEventListener('click', () => { const was = !$('ovMenu').hidden; closeMenus(); renderOverlayUI(); $('ovMenu').hidden = was; if (!was) fitMenu($('ovMenu')); });
+$('sugPill').addEventListener('click', () => { const s = pending()[0]; if (s) gotoSug(s.id); });
+$('searchBtn').addEventListener('click', () => palOpen());
+$('seqInfo').addEventListener('click', () => actions['page.seq']());
+async function exportFromCode() {
+  toast('Exporting the model from the code…');
+  try { await api('POST', '/api/export'); toast('Export done. The model reloads.'); } catch (err) { alert(`Export failed: ${err.message}. Run \`archplan export\` in a terminal to see why.`); }
+}
+function resetTarget() { undoStack.push(clone(toBe)); toBe = clone(BASE); sel = null; multi = []; verifyStage = 0; positions = {components: {}, types: {}, glossary: {}}; viewports = {}; render(); toast('The target is the as-is model again. Undo reverts this.'); }
+const PAL = {items: [], i: 0};
+function palOpen() { closeMenus(); $('palette').hidden = false; $('palIn').value = ''; palUpdate(); $('palIn').focus(); }
+function palClose() { $('palette').hidden = true; }
+function palUpdate() {
+  const q = $('palIn').value.trim().toLowerCase(), items = [];
+  const it = (k, label, run, r) => items.push({k, label, run, r});
+  [['components', 'Components'], ['types', 'Types'], ['seq', 'Sequences'], ['glossary', 'Glossary']].forEach(([v, l]) => it('view', `${l} view`, () => { view = v; sel = null; render(); }));
+  [['asis', 'As-is'], ['tobe', 'To-be'], ['diff', 'Diff']].forEach(([m, l]) => it('mode', l, () => { mode = m; render(); }));
+  it('view', hideLeaves ? 'Show leaves' : 'Hide leaves', () => setLeaves(!hideLeaves));
+  it('view', showExternal ? 'Hide external libraries' : 'Show external libraries', () => { showExternal = !showExternal; positions.components = {}; render(true); });
+  OVERLAYS.forEach(([o, l]) => it('overlay', 'Overlay: ' + l, () => setOverlay(o)));
+  [['intent', 'Intent'], ['rules', 'Rules'], ['tasks', 'Tasks'], ['decisions', 'Decisions'], ['questions', 'Questions'], ['done', 'Done'], ['changes', 'Changes'], ['check', 'Check against the code']].forEach(([s, l]) => it('plan', l, () => gotoSec(s)));
+  it('action', 'Re-layout', () => $('layoutBtn').click()); it('action', 'Fit the diagram', () => $('fitBtn').click()); it('action', 'Undo', () => $('undoBtn').click());
+  for (const x of [...shareItems(), ...moreItems()]) if (x.label && !x.off) it('action', x.label, x.run);
+  for (const t of curPlan().tasks) it('task', `${t.id} ${t.title}`, () => showTask(t.key));
+  for (const [id, s] of Object.entries(toBe.sequences)) it('sequence', s.title || id, () => { view = 'seq'; curSeq = id; sel = null; render(); });
+  for (const [id, c] of Object.entries({...asIs.components, ...toBe.components})) it('component', c.name, () => gotoAnchor('comp:' + id), c.path);
+  for (const [id, c] of Object.entries(toBe.vocabulary?.concepts || {})) it('concept', c.name, () => gotoAnchor('concept:' + id));
+  if (q) for (const [id, t] of Object.entries({...asIs.types, ...toBe.types})) it('type', t.name, () => gotoAnchor('type:' + id), cname(toBe, t.comp));
+  const sc = x => { const l = x.label.toLowerCase(); return !q ? 1 : l.startsWith(q) ? 0 : l.includes(q) ? 1 : (x.r || '').toLowerCase().includes(q) ? 2 : 9; };
+  PAL.items = items.map((x, i) => [sc(x), i, x]).filter(([s]) => s < 9).sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, 80).map(([, , x]) => x);
+  PAL.i = 0; palDraw();
+}
+function palDraw() {
+  $('palList').innerHTML = PAL.items.map((x, i) => `<div class="pal-i${i === PAL.i ? ' on' : ''}" data-i="${i}"><span class="k">${x.k}</span><span>${esc(x.label)}</span><span class="r">${esc(x.r || '')}</span></div>`).join('') || '<div class="empty" style="padding:12px">Nothing found.</div>';
+  $('palList').children[PAL.i]?.scrollIntoView({block: 'nearest'});
+}
+function palRun(i) { const x = PAL.items[i]; palClose(); x?.run(); }
+$('palIn').addEventListener('input', palUpdate);
+$('palIn').addEventListener('keydown', e => {
+  const n = PAL.items.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (n) { PAL.i = (PAL.i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n; palDraw(); } }
+  else if (e.key === 'Enter') { e.preventDefault(); palRun(PAL.i); }
+  else if (e.key === 'Escape') { e.preventDefault(); palClose(); }
+});
+$('palList').addEventListener('click', e => { const x = e.target.closest('[data-i]'); if (x) palRun(+x.dataset.i); });
+$('palette').addEventListener('click', e => { if (e.target.id === 'palette') palClose(); });
+
+// ---------- header, toolbar and canvas bar ----------
+function renderHeader() {
+  const g = collab?.git;
+  $('repo').textContent = g?.head ? `${g.branch || 'detached'} · ${g.head.slice(0, 7)}` : `${META.repo}@${META.commit}`;
+  $('repo').title = `The as-is model was exported at ${META.repo}@${META.commit}.`;
+  const n = pending().length;
+  $('sugPill').hidden = !n;
+  $('sugPill').innerHTML = `<span class="dot warn"></span>${plural(n, 'suggestion')} to review`;
+  $('suggMode').hidden = !n;
+  if (mode === 'sugg' && !n) mode = 'diff';
+  document.querySelectorAll('#modes button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+}
+let showLegend = localStorage.getItem('archplan.legend') !== '0';
+function renderCanvasBar() {
+  const graph = $('cy').style.visibility !== 'hidden';
+  ['layoutBtn', 'fitBtn', 'zoomIn', 'zoomOut', 'connectBtn'].forEach(id => $(id).disabled = !graph);
+  $('zoomPct').textContent = graph ? Math.round(cy.zoom() * 100) + '%' : '';
+  $('legendBtn').classList.toggle('on', showLegend);
+  $('legend').style.display = showLegend && $('gloss').style.display !== 'block' ? '' : 'none';
+}
+function renderViewBtn() {
+  const n = [hideLeaves, showExternal, !!seqFilter, glossMode !== 'map'].filter(Boolean).length;
+  $('viewBtn').textContent = n ? `View · ${n} ▾` : 'View ▾';
+  $('viewBtn').classList.toggle('on', !!n);
+}
+$('fitBtn').addEventListener('click', () => cy.fit(undefined, 40));
+const zoomBy = f => cy.zoom({level: Math.max(cy.minZoom(), Math.min(cy.maxZoom(), cy.zoom() * f)), renderedPosition: {x: cy.width() / 2, y: cy.height() / 2}});
+$('zoomIn').addEventListener('click', () => zoomBy(1.25));
+$('zoomOut').addEventListener('click', () => zoomBy(0.8));
+$('legendBtn').addEventListener('click', () => { showLegend = !showLegend; localStorage.setItem('archplan.legend', showLegend ? '1' : '0'); renderCanvasBar(); });
+cy.on('zoom', () => { $('zoomPct').textContent = Math.round(cy.zoom() * 100) + '%'; });
+function setLeaves(on) { hideLeaves = on; localStorage.setItem('archplan.hideLeaves', on ? '1' : '0'); positions.components = {}; positions.types = {}; render(true); }
+$('viewReset').addEventListener('click', () => {
+  hideLeaves = showExternal = false; seqFilter = ''; glossMode = 'map';
+  localStorage.setItem('archplan.hideLeaves', '0');
+  positions = {components: {}, types: {}, glossary: {}}; viewports = {};
+  render(true);
+});
+
 function render(forceLayout) {
   D = diffModels(asIs, toBe);
-  $('repo').textContent = `${META.repo}@${META.commit}`;
+  renderHeader();
   document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
-  document.querySelectorAll('#modes button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
-  $('seqSel').style.display = view === 'seq' ? '' : 'none';
+  $('seqSel').style.display = $('seqInfo').style.display = view === 'seq' ? '' : 'none';
+  $('focusBox').style.display = $('viewBtn').parentNode.style.display = view === 'seq' ? 'none' : '';
+  $('leafOpt').style.display = view === 'glossary' || view === 'seq' ? 'none' : '';
+  $('extOpt').style.display = view === 'components' ? '' : 'none';
+  $('glossBox').style.display = view === 'glossary' ? '' : 'none';
+  $('seqFilterBox').style.display = view === 'seq' || !Object.keys(toBe.sequences).length ? 'none' : '';
   if (!toBe.sequences[curSeq]) curSeq = Object.keys(toBe.sequences)[0] || '';
   $('seqSel').innerHTML = opts(Object.entries(toBe.sequences).map(([k, q]) => [k, q.title || k]), curSeq);
   $('undoBtn').disabled = !undoStack.length;
   const glossTable = view === 'glossary' && (glossMode === 'table' || (!hasVocab(asIs) && !hasVocab(toBe)));
-  $('glossMode').style.display = view === 'glossary' ? '' : 'none'; $('glossMode').value = glossMode;
+  $('glossMode').value = glossMode;
   $('cy').style.visibility = view === 'seq' || glossTable ? 'hidden' : 'visible';
   $('seq').style.display = view === 'seq' ? '' : 'none';
   $('gloss').style.display = glossTable ? 'block' : 'none';
-  $('legend').style.display = glossTable ? 'none' : '';
   closePop(); hideEdgeAct();
+  if (view === 'seq' || glossTable) $('emptyMsg').hidden = true;
   if (view === 'seq') renderSeq(); else if (glossTable) renderGloss(); else renderCy(forceLayout);
-  legend();
+  legend(); renderCanvasBar(); renderOverlayUI(); renderViewBtn();
   renderFocus();
   renderSide();
   publish();
 }
 
 $('views').addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) { view = b.dataset.view; sel = null; render(); } });
-$('modes').addEventListener('click', e => { const b = e.target.closest('[data-mode]'); if (b) { mode = b.dataset.mode; render(); } });
+$('modes').addEventListener('click', e => { const b = e.target.closest('[data-mode]'); if (b) { mode = b.dataset.mode; if (mode === 'sugg') SUG.active ||= pending()[0]?.id; render(); } });
 $('seqSel').addEventListener('change', e => { curSeq = e.target.value; sel = null; render(); });
-$('demoBtn').addEventListener('click', applyDemo);
 $('undoBtn').addEventListener('click', () => { if (undoStack.length) { toBe = undoStack.pop(); verifyStage = 0; render(); } });
-$('resetBtn').addEventListener('click', () => { undoStack.push(clone(toBe)); toBe = clone(BASE); sel = null; verifyStage = 0; positions = {components: {}, types: {}, glossary: {}}; viewports = {}; render(); });
 $('layoutBtn').addEventListener('click', () => { if (view !== 'seq' && view !== 'glossary') render(true); });
-setTimeout(() => $('hint').style.display = 'none', 9000);
+setTimeout(() => $('hint').style.display = 'none', 12000);
 window.addEventListener('resize', () => { if (view !== 'seq') cy.resize(); });
-$('refreshBtn').addEventListener('click', async () => {
-  const b = $('refreshBtn'); b.disabled = true; b.textContent = '⟳ Exporting…';
-  try { await api('POST', '/api/export'); } catch (err) { alert(`Export failed: ${err.message}. Run \`archplan export\` in a terminal to see why.`); }
-  b.disabled = false; b.textContent = '⟳ From code';
-});
 window.addEventListener('load', () => requestAnimationFrame(async () => {
   if (!localStorage.getItem('archplan.helpSeen')) showHelp(true);
   const qs = new URLSearchParams(location.search);
@@ -2779,16 +3630,18 @@ window.addEventListener('load', () => requestAnimationFrame(async () => {
   } catch { collab = null; }
   if (collab) {
     document.title = `archplan · ${collab.name}`;
-    document.querySelector('.brand span').textContent = collab.name;
+    $('proj').textContent = collab.name;
     known.modelEtag = collab.model_etag;
-    $('refreshBtn').style.display = collab.can_export ? '' : 'none';
     const d = await api('GET', '/api/threads?since=-1'); threadsVer = d.version; threads = d.threads; pollKey = d.key;
-  }
+    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag;
+    loadActivity(); loadSuggestions(); loadHotspots();
+    $('hint').style.display = 'none';
+  } else { $('proj').textContent = qs.has('sample') ? 'sample' : 'local file'; loadHotspots(); }
   const url = qs.has('sample') ? null : qs.get('model') || collab?.model;
   if (!url) {
     restored = true;
-    if (collab) { pollThreads(); toast(collab.can_export ? 'No model of the code yet: click ⟳ From code.' : 'No model of the code yet: set "export" in .archplan/config.json.'); }
-    return render();
+    if (collab) { pollThreads(); toast(collab.can_export ? 'No model of the code yet. Choose Export from code in the ⋯ menu.' : 'No model of the code yet: set "export" in .archplan/config.json.'); }
+    render(); return applyHash();
   }
   try {
     const r = await fetch(url);
@@ -2798,6 +3651,7 @@ window.addEventListener('load', () => requestAnimationFrame(async () => {
   } catch (err) { alert(`${url}: ${err.message}`); render(); }
   restored = true;
   publish();
+  applyHash();
   if (collab) pollThreads();
 }));
 </script>

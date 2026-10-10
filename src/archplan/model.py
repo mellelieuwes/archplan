@@ -219,16 +219,30 @@ def apply_edits(m: dict, ops: list) -> list:
     return out
 
 
-def edit_target(p: Project, ops: list) -> dict:
-    """Apply ops to the target model (starting from the as-is model when there is
-    no target yet) and save it as the agent's revision. All ops apply or none."""
+def edited(p: Project, ops: list) -> tuple:
+    """A copy of the target model (or the as-is model when there is no target
+    yet) with ops applied, and one line per op. Raises ValueError when an op
+    does not apply; the stored target is not touched."""
     m = p.target_or_model()
     if not m:
         raise ValueError("no model yet; run the export first (refresh_model)")
+    if not isinstance(ops, list) or not all(isinstance(o, dict) for o in ops):
+        raise ValueError("ops must be a list of objects")
     m = copy.deepcopy(m)
-    done = apply_edits(m, ops)
+    return m, apply_edits(m, ops)
+
+
+def save_edited(p: Project, m: dict, by: str) -> int:
+    """Save an edited target. The first target starts from the current model, so
+    that model becomes its base."""
     base = None if p.target_path.exists() else etag(p.model_path)
-    rev = p.save_target(m, "agent", base)
+    return p.save_target(m, by, base)
+
+
+def edit_target(p: Project, ops: list, by: str = "agent") -> dict:
+    """Apply ops to the target model and save it. All ops apply or none."""
+    m, done = edited(p, ops)
+    rev = save_edited(p, m, by)
     return {"applied": done, "target_rev": rev, "violations": len(violations(m)),
             "note": "The editor shows the change in its Diff view within a few seconds and "
                     "recomputes the plan; call get_plan afterwards to see the tasks."}

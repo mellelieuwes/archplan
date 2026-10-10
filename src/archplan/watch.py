@@ -5,6 +5,7 @@ Events:
   comment   a thread whose newest message is from the human (new or updated)
   resolved  a thread the human resolved or reopened
   plan      the plan changed (tasks added or removed)
+  suggestion  the human accepted, partly accepted or rejected a suggestion
 """
 
 from __future__ import annotations
@@ -12,7 +13,8 @@ from __future__ import annotations
 import time
 
 from .project import Project, read_json
-from .store import Store
+from .store import Store, mentions
+from .suggestions import Suggestions
 
 
 def tasks(p: Project):
@@ -26,6 +28,8 @@ def watch(p: Project, interval: float = 2, emit=print) -> None:
     store = Store(p.dir)
     seen = {t["id"]: (len(t["messages"]), t["status"]) for t in store.read()["threads"]}
     last_tasks = tasks(p)
+    sgs = Suggestions(p.dir)
+    decided = {x["id"]: x["status"] for x in sgs.read()["suggestions"]}
     out = lambda s: emit(s, flush=True) if emit is print else emit(s)
     while True:
         time.sleep(interval)
@@ -35,10 +39,14 @@ def watch(p: Project, interval: float = 2, emit=print) -> None:
             seen[t["id"]] = (n, st)
             last = t["messages"][-1]
             if (old is None or n > old[0]) and last["author"] != "agent":
-                text = " ".join(last["text"].split())
+                text = " ".join(mentions(last["text"]).split())
                 out(f"comment {t['id']} on {t['anchor'][:120]}: {text[:300]}")
             elif old and st != old[1] and n == old[0]:  # status alone: the human (the agent resolves with a reply)
                 out(f"{'resolved' if st != 'open' else 'reopened'} {t['id']} on {t['anchor'][:120]}")
+        for x in sgs.read()["suggestions"]:
+            if x["status"] != decided.get(x["id"], "pending"):
+                out(suggestion_line(x))
+            decided[x["id"]] = x["status"]
         cur = tasks(p)
         if cur is not None and last_tasks is not None and cur != last_tasks:
             added = [cur[k] for k in cur if k not in last_tasks]
@@ -48,3 +56,12 @@ def watch(p: Project, interval: float = 2, emit=print) -> None:
                 out(f"plan {len(cur)} tasks: " + "; ".join(parts)[:400])
         if cur is not None:
             last_tasks = cur
+
+
+def suggestion_line(x: dict) -> str:
+    n, k = len(x["ops"]), len(x.get("accepted") or [])
+    what = {"accepted": f"accepted ({k} of {n} ops)", "partial": f"partly accepted ({k} of {n} ops: "
+            + ", ".join(map(str, x["accepted"])) + ")", "rejected": f"rejected (0 of {n} ops)"}.get(x["status"], x["status"])
+    on = f" in thread {x['thread']}" if x.get("thread") else ""
+    note = " ".join((x.get("note") or "").split())[:200]
+    return f"suggestion {x['id']}{on} {what}" + (f": {note}" if note else "")
