@@ -462,12 +462,11 @@ defmodule ArchplanElixir.Export do
   defp put(map, k, v), do: Map.put(map, k, v)
 
   # "Systems.Assignment.Model" in component "Systems.Assignment" -> "Assignment.Model".
+  # The name within the component: the editor shows it after the component id.
   defp short_name(id, comp) do
-    last = comp |> String.split(".") |> List.last()
-
     cond do
-      id == comp -> last
-      String.starts_with?(id, comp <> ".") -> last <> "." <> String.replace_prefix(id, comp <> ".", "")
+      id == comp -> comp |> String.split(".") |> List.last()
+      String.starts_with?(id, comp <> ".") -> String.replace_prefix(id, comp <> ".", "")
       true -> id
     end
   end
@@ -517,12 +516,21 @@ defmodule ArchplanElixir.Export do
         else: m.behaviour_info(:callbacks)
 
     sigs = specs(m, &Code.Typespec.fetch_callbacks/1)
-    for {f, a} <- Enum.sort(names), do: %{"name" => to_string(f), "sig" => sigs[{f, a}] || "#{f}/#{a}"}
+    for {f, a} <- Enum.sort(names), do: method(f, a, sigs)
   end
 
   defp methods(m, _kind) do
     sigs = specs(m, &Code.Typespec.fetch_specs/1)
-    for {f, a} <- public_functions(m), do: %{"name" => to_string(f), "sig" => sigs[{f, a}] || "#{f}/#{a}"}
+    for {f, a} <- public_functions(m), do: method(f, a, sigs)
+  end
+
+  # Arity is part of a function's identity, so it goes in the name: a module
+  # may have create/1 and create/2. The sig is the spec without the name.
+  defp method(f, a, sigs) do
+    case sigs[{f, a}] do
+      nil -> %{"name" => "#{f}/#{a}"}
+      sig -> %{"name" => "#{f}/#{a}", "sig" => sig}
+    end
   end
 
   defp specs(m, fetch) do
@@ -531,7 +539,9 @@ defmodule ArchplanElixir.Export do
         for {{f, a}, clauses} <- list, into: %{} do
           sig =
             clauses
-            |> Enum.map(fn spec -> Code.Typespec.spec_to_quoted(f, spec) |> Macro.to_string() |> squash() end)
+            |> Enum.map(fn spec ->
+              Code.Typespec.spec_to_quoted(f, spec) |> Macro.to_string() |> squash() |> drop_name(f)
+            end)
             |> Enum.join("; ")
 
           {{f, a}, sig}
@@ -543,6 +553,8 @@ defmodule ArchplanElixir.Export do
   rescue
     _ -> %{}
   end
+
+  defp drop_name(sig, f), do: String.replace_prefix(sig, to_string(f), "")
 
   defp squash(s), do: s |> String.replace(~r/\s*\n\s*/, " ") |> String.replace("( ", "(") |> String.replace(" )", ")")
 

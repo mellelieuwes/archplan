@@ -184,7 +184,7 @@ Use `--max-cases 1`. Erlang call tracing is global. With tests running in parall
 | Behaviour or protocol | `interface` type; callbacks as methods |
 | Behaviour implementation or protocol `defimpl` | `implements` |
 | LiveView, LiveComponent, controller | `class` type |
-| Public function with `@spec` | method with signature |
+| Public function | method named `name/arity`, with the `@spec` (without the name) as `sig` |
 | No `boundary` library | policy `allow` |
 | `boundary` library | policy `deny` with the declared dependencies as rules |
 | Traced test | sequence |

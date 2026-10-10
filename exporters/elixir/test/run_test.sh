@@ -56,10 +56,13 @@ check(orders == {"name": "orders", "ref": "Shop.Orders.Order", "many": True}, f"
 order_user = [f for f in t["Shop.Orders.Order"]["fields"] if f["name"] == "user"][0]
 check(order_user == {"name": "user", "ref": "Shop.Accounts.User"}, f"belongs_to field {order_user}")
 check(t["Shop.Orders.Notifier"]["kind"] == "interface", "behaviour is an interface")
-check(t["Shop.Orders.Notifier"]["methods"][0]["name"] == "notify", "callback as method")
+check(t["Shop.Orders.Notifier"]["methods"][0]["name"].startswith("notify/"), "callback as method")
 check("Shop.Orders.Notifier" in t["Shop.Accounts.EmailNotifier"]["implements"], "behaviour implementer")
 check(t["Shop.Orders.Priced"]["kind"] == "interface", "protocol is an interface")
 check("Shop.Orders.Priced" in t["Shop.Orders.Order"]["implements"], "protocol implementation")
+check(all("/" in m["name"] and not m.get("sig", "(").startswith(m["name"].split("/")[0])
+          for ty in t.values() for m in ty.get("methods", [])), "method names carry the arity; sigs omit the name")
+check(t["Shop.Orders.Order"]["name"] == "Order", f"short type name {t['Shop.Orders.Order']['name']}")
 cart = {f["name"]: f for f in t["Shop.Orders.Cart"]["fields"]}
 check(cart["owner"].get("ref") == "Shop.Accounts.User", f"struct field ref from @type t: {cart}")
 check(cart["items"].get("many") is True, "list field is many")
