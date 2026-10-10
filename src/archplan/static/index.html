@@ -128,7 +128,7 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
   <div class="focus" id="focusBox"><input id="focusIn" list="focusList" placeholder="Focus component…"><datalist id="focusList"></datalist><span id="chips"></span>
     <select id="seqFilter" title="Show only the components and types a sequence touches"></select>
     <label class="mute" title="Show third-party components"><input type="checkbox" id="extChk"> external</label>
-    <label class="mute" title="Hide leaves: boxes with at most one incoming line and no outgoing ones. Changed, selected and focused boxes stay."><input type="checkbox" id="leafChk"> hide leaves<span id="leafN"></span></label></div>
+    <label class="mute" title="Hide leaves: boxes with at most one incoming line and no outgoing ones, repeated until none are left. Changed, selected and focused boxes stay."><input type="checkbox" id="leafChk"> hide leaves<span id="leafN"></span></label></div>
   <div class="seg" id="modes">
     <button data-mode="asis">As-is</button>
     <button data-mode="tobe">To-be</button>
@@ -150,7 +150,7 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
   <p>Plan an architecture change, then let an agent build it. The <b>as-is</b> model comes from the code. You edit the <b>to-be</b> model. The difference becomes a <b>plan</b>.</p>
   <h3>Start here</h3>
   <ol>
-    <li><b>Look around.</b> Pick a view: <i>Components</i> (packages and their dependencies), <i>Types</i>, <i>Sequence</i> (call flows) or <i>Glossary</i> (the terms each component owns). Type in <i>Focus component…</i> to zoom in on one part. Double-click a box to focus on it. <i>Hide leaves</i> hides boxes with at most one incoming line and no outgoing ones, to show the connections that matter.</li>
+    <li><b>Look around.</b> Pick a view: <i>Components</i> (packages and their dependencies), <i>Types</i>, <i>Sequence</i> (call flows) or <i>Glossary</i> (the terms each component owns). Type in <i>Focus component…</i> to zoom in on one part. Double-click a box to focus on it. <i>Hide leaves</i> hides boxes with at most one incoming line and no outgoing ones, and then the boxes that only led to them, to show the connections that matter.</li>
     <li><b>Say what you want.</b> Open the <i>Plan</i> tab and write the intent: what should this change achieve?</li>
     <li><b>Edit the to-be model.</b> Select an item and change it in the <i>Inspect</i> tab: move a type, rename, forbid a dependency. Drag the blue dot from one box to another to connect them; select a line and press Delete to remove it. <i>Diff</i> shows what you changed.</li>
     <li><b>Comment.</b> Select an item and write in <i>Comments</i>. Shift-click several items to comment on them together, for example an import cycle.</li>
@@ -1845,8 +1845,9 @@ function renderCy(forceLayout) {
   const vp = viewports[view];
   if (vp) { cy.zoom(vp.zoom); cy.pan(vp.pan); } else cy.fit(undefined, 40);
 }
-// A leaf has at most one incoming line and no outgoing ones. Leaves are
-// rarely an architecture problem, so hiding them leaves the connections that matter.
+// A leaf has at most one incoming line and no outgoing ones. Leaves, and the
+// branches made of them, are rarely an architecture problem, so hiding them
+// leaves the connections that matter.
 function dropLeaves() {
   let n = 0;
   if (hideLeaves && view !== 'glossary') {
@@ -1857,10 +1858,13 @@ function dropLeaves() {
     const sk = view === 'types' ? 'type' : 'comp';
     // Both ends of a changed, violating or forbidden line stay, so the line does.
     const marked = cy.edges('.added, .removed, .changed, .moved, .violation, .rule').connectedNodes();
-    const leaves = cy.nodes().filter(x => x.data('sk') === sk && x.isChildless() && !keep(x) && !marked.has(x)
-      && x.incomers('node').filter(y => y !== x).length <= 1 && !x.outgoers('node').filter(y => y !== x).length);
-    n = leaves.length;
-    cy.remove(leaves);
+    // Repeat, so a branch that hangs off the graph by one line goes as a whole.
+    const isLeaf = x => x.data('sk') === sk && x.isChildless() && !keep(x) && !marked.has(x)
+      && x.incomers('node').filter(y => y !== x).length <= 1 && !x.outgoers('node').filter(y => y !== x).length;
+    for (let leaves = cy.nodes().filter(isLeaf); leaves.length; leaves = cy.nodes().filter(isLeaf)) {
+      n += leaves.length;
+      cy.remove(leaves);
+    }
     if (view === 'types') cy.remove(cy.nodes('.par').filter(x => x.isChildless()));
   }
   $('leafN').textContent = n ? ` (${n})` : '';
