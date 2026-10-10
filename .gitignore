@@ -1,0 +1,6 @@
+.ignored/
+__pycache__/
+*.egg-info/
+build/
+dist/
+.archplan/server.json

@@ -1,0 +1,11 @@
+{
+  "description": "Tell Claude about archplan comments that wait on it",
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/archplan\" hook", "timeout": 10}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/archplan\" hook", "timeout": 10}]}
+    ]
+  }
+}

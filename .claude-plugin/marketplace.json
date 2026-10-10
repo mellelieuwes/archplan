@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "archplan",
+  "description": "archplan: architecture planning with a human in the loop",
+  "owner": {
+    "name": "Jeroen Vloothuis"
+  },
+  "plugins": [
+    {
+      "name": "archplan",
+      "source": "./",
+      "description": "Plan architecture changes with a human in a browser editor, and let Claude answer comments and implement the plan.",
+      "category": "development"
+    }
+  ]
+}

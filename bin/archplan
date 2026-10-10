@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs archplan from this checkout without installing it. Claude Code puts a
+# plugin's bin/ on the PATH, so the plugin's skill, hooks and MCP server use this.
+here=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+PYTHONPATH="$here/src${PYTHONPATH:+:$PYTHONPATH}" exec "${ARCHPLAN_PYTHON:-python3}" -m archplan "$@"

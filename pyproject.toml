@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "archplan"
+version = "0.1.0"
+description = "Plan architecture changes with a human in an editor and an agent over MCP"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+archplan = "archplan.cli:main"
+
+[tool.setuptools.package-data]
+archplan = ["static/*", "format/*"]

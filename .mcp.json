@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "archplan": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/archplan",
+      "args": ["mcp"]
+    }
+  }
+}

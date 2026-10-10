@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://archplan.dev/schema/archmodel-1.json",
+  "title": "archmodel v1",
+  "type": "object",
+  "required": ["format"],
+  "properties": {
+    "format": { "const": "archmodel/1" },
+    "source": {
+      "type": "object",
+      "properties": {
+        "repo": { "type": "string" },
+        "ref": { "type": "string" },
+        "dirty": { "type": "boolean" },
+        "languages": { "type": "array", "items": { "type": "string" } },
+        "module": { "type": "string" },
+        "generator": { "type": "string" },
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "commands": {
+          "type": "object",
+          "properties": {
+            "build": { "type": "string" },
+            "test": { "type": "string" },
+            "rules": { "type": "string" },
+            "sequences": { "type": "string" }
+          },
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": { "id": { "type": "string" }, "name": { "type": "string" } }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "match": { "type": "array", "items": { "type": "string" } },
+          "layer": { "type": "string" },
+          "kind": { "enum": ["internal", "external"] },
+          "doc": { "type": "string" }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "weight": { "type": "integer", "minimum": 1 },
+          "evidence": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "required": ["default"],
+      "properties": {
+        "default": { "enum": ["allow", "deny"] },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "effect"],
+            "properties": {
+              "from": { "type": "string" },
+              "to": { "type": "string" },
+              "effect": { "enum": ["allow", "deny"] },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "enforcer": {
+          "type": "object",
+          "properties": {
+            "tool": { "type": "string" },
+            "config": { "type": "string" },
+            "command": { "type": "string" }
+          }
+        }
+      }
+    },
+    "types": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["name", "component", "kind"],
+        "properties": {
+          "name": { "type": "string" },
+          "component": { "type": "string" },
+          "kind": { "enum": ["struct", "class", "interface", "record", "enum", "alias", "function", "module"] },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "doc": { "type": "string" },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" },
+                "ref": { "type": "string" },
+                "ptr": { "type": "boolean" },
+                "many": { "type": "boolean" }
+              }
+            }
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "properties": { "name": { "type": "string" }, "sig": { "type": "string" } }
+            }
+          },
+          "implements": { "type": "array", "items": { "type": "string" } },
+          "uses": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "sequences": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["participants", "messages"],
+        "properties": {
+          "title": { "type": "string" },
+          "entry": { "type": "string" },
+          "source": { "type": "string" },
+          "participants": { "type": "array", "items": { "type": "string" } },
+          "fragments": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {
+                "kind": { "enum": ["loop", "alt", "opt", "par"] },
+                "label": { "type": "string" },
+                "parent": { "type": ["string", "null"] }
+              }
+            }
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "from", "to", "label"],
+              "properties": {
+                "id": { "type": "string" },
+                "from": { "type": "string" },
+                "to": { "type": "string" },
+                "label": { "type": "string" },
+                "depth": { "type": "integer", "minimum": 0 },
+                "fragment": { "type": "string" },
+                "async": { "type": "boolean" },
+                "via": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "vocabulary": {
+      "type": "object",
+      "properties": {
+        "concepts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "owner": { "type": "string" },
+              "terms": { "type": "array", "items": { "type": "string" } },
+              "kind": { "enum": ["domain", "vendor", "technical"] },
+              "definition": { "type": "string" },
+              "source": { "enum": ["glossary", "vendor", "suggested"] }
+            }
+          }
+        },
+        "components": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "file": { "type": "string" },
+              "uses": { "type": "array", "items": { "type": "string" } },
+              "avoid": { "type": "array", "items": { "type": "string" } },
+              "suggested": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["term", "score"],
+                  "properties": { "term": { "type": "string" }, "score": { "type": "number" } }
+                }
+              }
+            }
+          }
+        },
+        "usage": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["component", "concept"],
+            "properties": {
+              "component": { "type": "string" },
+              "concept": { "type": "string" },
+              "idents": { "type": "integer", "minimum": 0 },
+              "strings": { "type": "integer", "minimum": 0 },
+              "comments": { "type": "integer", "minimum": 0 },
+              "evidence": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "notes": { "type": "object", "additionalProperties": { "type": "string" } }
+  }
+}
