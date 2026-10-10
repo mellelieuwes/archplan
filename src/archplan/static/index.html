@@ -160,7 +160,7 @@ pre.raw{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);b
 #toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel);position:relative;z-index:20}
 #canvas{position:relative;flex:1;min-height:0}
 #cy,#seq{position:absolute;inset:0}
-#seq{overflow:auto}
+#seq{overflow:hidden;cursor:grab}#cy{cursor:grab}#canvas.panning #cy,#canvas.panning #seq,#canvas.space #cy,#canvas.space #seq{cursor:grabbing}#canvas.space #cy *,#canvas.space #seq *{cursor:grabbing!important}
 #gloss{position:absolute;inset:0;overflow:auto;padding:16px 20px 60px;display:none}
 #gloss table{border-collapse:collapse;width:100%;margin-bottom:6px}
 #gloss th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);font-weight:600;padding:4px 8px;border-bottom:1px solid var(--line)}
@@ -253,6 +253,9 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
     <tr><td><kbd>1</kbd> to <kbd>4</kbd></td><td>Components, Types, Sequences, Glossary</td></tr>
     <tr><td><kbd>F</kbd></td><td>Focus on the selected component</td></tr>
     <tr><td><kbd>L</kbd></td><td>Hide or show leaves</td></tr>
+    <tr><td>Scroll, or drag the background</td><td>Move the diagram. <kbd>Shift</kbd>+scroll moves it sideways; <kbd>Space</kbd>+drag works over boxes too.</td></tr>
+    <tr><td>Pinch, or <kbd>⌘</kbd>+scroll</td><td>Zoom around the pointer</td></tr>
+    <tr><td><kbd>0</kbd>, <kbd>+</kbd>, <kbd>−</kbd></td><td>Fit, zoom in, zoom out. Double-clicking the background also fits.</td></tr>
     <tr><td><kbd>Shift</kbd>-drag</td><td>Connect two boxes</td></tr>
     <tr><td><kbd>Shift</kbd>-click</td><td>Select several items</td></tr>
     <tr><td><kbd>Delete</kbd></td><td>Remove the selection from the target</td></tr>
@@ -317,7 +320,7 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
         <button class="tb" id="zoomOut" title="Zoom out">−</button><span id="zoomPct">100%</span><button class="tb" id="zoomIn" title="Zoom in">+</button>
         <button class="tb" id="legendBtn" title="Show or hide the legend">◫ Legend</button>
       </div>
-      <div id="hint">Drag the blue dot on a box to another box to connect them. Select a line and press Delete to disconnect. In Sequences, drag from one lifeline to another to add a call, and drag a call up or down to reorder. The plan updates live.</div>
+      <div id="hint">Scroll or drag the background to move. Pinch or ⌘+scroll to zoom. Drag the blue dot on a box to another box to connect them. Select a line and press Delete to disconnect. In Sequences, drag from one lifeline to another to add a call, and drag a call up or down to reorder. The plan updates live.</div>
     </div>
   </section>
 </main>
@@ -1484,8 +1487,10 @@ function toD2() {
 // ---------- canvas (cytoscape) ----------
 try { cytoscape.use(cytoscapeDagre); } catch (e) {}
 const COL = {'': '#334155', added: '#16a34a', removed: '#dc2626', changed: '#d97706', moved: '#7c3aed'};
+// One zoom range for every diagram.
+const ZMIN = 0.2, ZMAX = 2.5, ZSTEP = 1.25, ZFIT = 1.25;
 const cy = cytoscape({
-  container: $('cy'), wheelSensitivity: 0.25, minZoom: 0.2, maxZoom: 2.5,
+  container: $('cy'), userZoomingEnabled: false, minZoom: ZMIN, maxZoom: ZMAX,
   style: [
     {selector: 'node', style: {'label': 'data(label)', 'text-wrap': 'wrap', 'text-max-width': 1000, 'font-size': 12, 'color': '#0f172a', 'text-valign': 'center', 'text-halign': 'center'}},
     {selector: 'node.typ', style: {'shape': 'rectangle', 'width': 'data(w)', 'height': 'data(h)', 'background-color': '#fff', 'border-width': 1.5, 'border-color': '#334155',
@@ -1936,6 +1941,9 @@ document.addEventListener('keydown', ev => {
   const V = {1: 'components', 2: 'types', 3: 'seq', 4: 'glossary'}[ev.key];
   if (V) { view = V; if (sel?.kind === 'msg' !== (V === 'seq')) sel = null; return render(); }
   if (ev.key === 'l' || ev.key === 'L') return setLeaves(!hideLeaves);
+  if (ev.key === '0') return navFit();
+  if (ev.key === '+' || ev.key === '=') return navZoom(ZSTEP);
+  if (ev.key === '-' || ev.key === '_') return navZoom(1 / ZSTEP);
   if ((ev.key === 'f' || ev.key === 'F') && sel?.kind === 'comp') { focus.add(sel.id); positions = {components: {}, types: {}, glossary: {}}; viewports = {}; return render(true); }
   if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel) { ev.preventDefault(); deleteSelection(); }
 });
@@ -2024,7 +2032,7 @@ function renderCy0(forceLayout) {
   emptyState(before);
   applySel();
   const vp = viewports[view];
-  if (vp) { cy.zoom(vp.zoom); cy.pan(vp.pan); } else { cy.fit(undefined, 40); if (cy.zoom() > 1.25) { cy.zoom(1.25); cy.center(); } }
+  if (vp) { cy.zoom(vp.zoom); cy.pan(vp.pan); } else cyFit();
 }
 // A leaf has at most one incoming line and no outgoing ones. Leaves, and the
 // branches made of them, are rarely an architecture problem, so hiding them
@@ -2111,13 +2119,15 @@ function renderSeq0() {
   const px = {}; parts.forEach((p, i) => px[p.id] = x0 + i * colW);
   const M = mode === 'asis' ? asIs : toBe, nm = id => pname(M, id), cm = id => psub(M, id);
   const SQ = M.sequences[curSeq] || toBe.sequences[curSeq];
-  let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" style="font-family:-apple-system,Inter,sans-serif"><defs>`;
+  seqDims = {W, H};
+  if (seqVP.seq !== curSeq) Object.assign(seqVP, {seq: curSeq, z: 1, x: 0, y: 0});
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" style="font-family:-apple-system,Inter,sans-serif;display:block"><defs>`;
   for (const [k, c] of Object.entries(COL)) {
     const n = k || 'base';
     s += `<marker id="f-${n}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0L10,5L0,10z" fill="${c}"/></marker>`;
     s += `<marker id="o-${n}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0L10,5L0,10" fill="none" stroke="${c}" stroke-width="1.6"/></marker>`;
   }
-  s += `</defs><text x="16" y="18" font-size="13" fill="#64748b">sequence ${esc(SQ.title || curSeq)}${SQ.source ? ' (' + esc(SQ.source) + ')' : ''} · ${mode === 'diff' ? 'diff as-is → to-be' : mode === 'asis' ? 'as-is (from traces)' : 'target'}</text>`;
+  s += `</defs><g id="seqRoot" transform="${seqTf()}"><text x="16" y="18" font-size="13" fill="#64748b">sequence ${esc(SQ.title || curSeq)}${SQ.source ? ' (' + esc(SQ.source) + ')' : ''} · ${mode === 'diff' ? 'diff as-is → to-be' : mode === 'asis' ? 'as-is (from traces)' : 'target'}</text>`;
   parts.forEach(p => {
     const x = px[p.id], c = COL[p.st] || COL[''];
     const isSel = ((sel?.kind === 'type' || sel?.kind === 'comp') && sel.id === p.id) || multi.includes('comp:' + p.id) || multi.includes('type:' + p.id);
@@ -2158,7 +2168,7 @@ function renderSeq0() {
     const isSel = (sel?.kind === 'msg' && sel.id === m.id) || multi.includes(`msg:${curSeq}:${m.id}`);
     const num = m.st === 'removed' ? '·' : ++n;
     const note = openOn(`msg:${curSeq}:${m.id}`) ? ' 💬' : '';
-    s += `<g data-mid="${m.id}" style="cursor:${m.st === 'removed' ? 'pointer' : 'grab'}" opacity="${m.st === 'removed' ? .55 : 1}">`;
+    s += `<g data-mid="${m.id}" style="cursor:${m.st === 'removed' ? 'pointer' : 'ns-resize'}" opacity="${m.st === 'removed' ? .55 : 1}">`;
     const lx = Math.min(x1, x2), rx = Math.max(x1, x2);
     s += `<rect x="${lx - 12}" y="${y - 24}" width="${Math.max(rx - lx, 60) + 24}" height="34" rx="6" fill="${isSel ? 'rgba(37,99,235,.12)' : 'transparent'}"/>`;
     if (x1 === x2) {
@@ -2172,10 +2182,12 @@ function renderSeq0() {
     if (m.st) s += `<text x="${rx + 10}" y="${y + 4}" font-size="11" fill="${c}">${m.st}</text>`;
     s += `</g>`;
   });
-  s += `</svg>`;
+  s += `</g></svg>`;
   $('seq').innerHTML = s;
+  zoomReadout();
 }
-let seqLayout = null, sdrag = null, suppressClick = false;
+let seqLayout = null, sdrag = null, suppressClick = false, seqDims = {W: 0, H: 0};
+const seqVP = {seq: null, z: 1, x: 0, y: 0}, seqTf = () => `matrix(${seqVP.z},0,0,${seqVP.z},${seqVP.x},${seqVP.y})`;
 $('seq').addEventListener('mousedown', ev => {
   if (ev.button !== 0 || !seqLayout) return;
   const msgEl = ev.target.closest('[data-mid]'), life = ev.target.closest('[data-life],[data-part]');
@@ -2187,13 +2199,13 @@ $('seq').addEventListener('mousedown', ev => {
     const pid = life.dataset.life || life.dataset.part;
     if (!toBe.types[pid] && !toBe.components[pid]) return;
     sdrag = {type: 'conn', from: pid, x0: ev.clientX, y0: ev.clientY, active: false};
-  } else return;
+  } else return navDrag(ev);
   ev.preventDefault();
   closePop();
   window.addEventListener('mousemove', seqMove);
   window.addEventListener('mouseup', seqUp, {once: true});
 });
-function svgPt(ev) { const r = $('seq').querySelector('svg').getBoundingClientRect(); return {x: ev.clientX - r.left, y: ev.clientY - r.top}; }
+function svgPt(ev) { const r = $('seq').getBoundingClientRect(); return {x: (ev.clientX - r.left - seqVP.x) / seqVP.z, y: (ev.clientY - r.top - seqVP.y) / seqVP.z}; }
 function nearestPart(x) {
   let best = null, bd = Infinity;
   seqLayout.parts.filter(p => p.st !== 'removed').forEach(p => { const d = Math.abs(seqLayout.px[p.id] - x); if (d < bd) { bd = d; best = p.id; } });
@@ -2204,11 +2216,11 @@ function seqMove(ev) {
   if (!sdrag.active && Math.hypot(ev.clientX - sdrag.x0, ev.clientY - sdrag.y0) < 5) return;
   sdrag.active = true;
   if (sdrag.type === 'move') {
-    sdrag.el.setAttribute('transform', `translate(0,${ev.clientY - sdrag.y0})`);
+    sdrag.el.setAttribute('transform', `translate(0,${(ev.clientY - sdrag.y0) / seqVP.z})`);
     sdrag.el.style.cursor = 'grabbing';
     return;
   }
-  const svg = $('seq').querySelector('svg'), p = svgPt(ev);
+  const svg = $('seqRoot'), p = svgPt(ev);
   let ln = svg.querySelector('#tmpLine');
   if (!ln) {
     ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -2226,7 +2238,7 @@ function seqUp(ev) {
   if (!d || !d.active) return;
   suppressClick = true; setTimeout(() => suppressClick = false, 0);
   if (d.type === 'move') {
-    const shift = Math.round((ev.clientY - d.y0) / seqLayout.rowH);
+    const shift = Math.round((ev.clientY - d.y0) / seqVP.z / seqLayout.rowH);
     if (!shift) return renderSeq();
     sel = {kind: 'msg', seq: curSeq, id: d.id};
     edit(m => {
@@ -2255,6 +2267,85 @@ $('seq').addEventListener('click', e => {
   if (p) return select({kind: toBe.components[p.dataset.part] && !toBe.types[p.dataset.part] ? 'comp' : 'type', id: p.dataset.part});
   select(null);
 });
+
+// ---------- one way to move around every diagram ----------
+// Scroll or two-finger swipe pans. Pinch or ⌘/Ctrl+scroll zooms around the
+// pointer. Dragging the background, or Space+drag anywhere, pans. Double-click
+// on the background fits. The Cytoscape views and the sequence SVG share this
+// code through a small adapter: get() and set() a zoom and a pan, where a
+// screen point = diagram point × zoom + pan.
+const NAV = {
+  cy: {el: () => $('cy'), get: () => ({z: cy.zoom(), ...cy.pan()}), set: (z, x, y) => cy.viewport({zoom: z, pan: {x, y}}),
+    box: () => { const b = cy.elements().boundingBox(); return cy.elements().length ? b : null; }},
+  seq: {el: () => $('seq'), get: () => seqVP, box: () => seqDims.W ? {x1: 0, y1: 0, w: seqDims.W, h: seqDims.H} : null,
+    set: (z, x, y) => { Object.assign(seqVP, {z, x, y}); $('seqRoot')?.setAttribute('transform', seqTf()); zoomReadout(); }}
+};
+const navTarget = () => view === 'seq' ? NAV.seq : $('cy').style.visibility !== 'hidden' ? NAV.cy : null;
+const clampZ = z => Math.max(ZMIN, Math.min(ZMAX, z));
+function zoomReadout() { const t = navTarget(); $('zoomPct').textContent = t ? Math.round(t.get().z * 100) + '%' : ''; }
+// Zoom by a factor around a point in the canvas (default: its centre).
+function navZoom(f, at) {
+  const t = navTarget(); if (!t) return;
+  const el = t.el(), v = t.get(), z = clampZ(v.z * f), k = z / v.z;
+  const p = at || {x: el.clientWidth / 2, y: el.clientHeight / 2};
+  t.set(z, p.x - (p.x - v.x) * k, p.y - (p.y - v.y) * k);
+}
+const navPan = (dx, dy) => { const t = navTarget(); if (!t) return; const v = t.get(); t.set(v.z, v.x + dx, v.y + dy); };
+function navFit() {
+  const t = navTarget(), b = t?.box(); if (!b) return;
+  const el = t.el(), pad = 40, W = el.clientWidth, H = el.clientHeight;
+  const z = clampZ(Math.min((W - 2 * pad) / (b.w || 1), (H - 2 * pad) / (b.h || 1), ZFIT));
+  t.set(z, (W - b.w * z) / 2 - b.x1 * z, Math.max(pad - b.y1 * z, (H - b.h * z) / 2 - b.y1 * z));
+}
+const cyFit = () => NAV.cy.box() ? (navTarget() === NAV.cy ? navFit() : cy.fit(undefined, 40)) : null;
+// Pan by dragging: the sequence background calls this, as does Space+drag
+// everywhere. Cytoscape pans its own background the same way.
+function navDrag(ev) {
+  ev.preventDefault();
+  let x = ev.clientX, y = ev.clientY, moved = false;
+  $('canvas').classList.add('panning');
+  const move = e => { navPan(e.clientX - x, e.clientY - y); x = e.clientX; y = e.clientY; moved = true; };
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', () => {
+    window.removeEventListener('mousemove', move); $('canvas').classList.remove('panning');
+    if (moved) { suppressClick = true; setTimeout(() => suppressClick = false, 0); }
+  }, {once: true});
+}
+const overDiagram = e => { const t = navTarget(); return t && t.el().contains(e.target); };
+$('canvas').addEventListener('wheel', e => {
+  if (!overDiagram(e)) return;
+  e.preventDefault();
+  const r = navTarget().el().getBoundingClientRect(), unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? r.height : 1;
+  let dx = e.deltaX * unit, dy = e.deltaY * unit;
+  if (e.ctrlKey || e.metaKey) return navZoom(Math.exp(-Math.max(-25, Math.min(25, dy)) * 0.01), {x: e.clientX - r.left, y: e.clientY - r.top});
+  if (e.shiftKey && !dx) { dx = dy; dy = 0; }
+  navPan(-dx, -dy);
+}, {passive: false});
+// Safari reports a trackpad pinch as gesture events, not as Ctrl+wheel.
+let gScale = 1;
+$('canvas').addEventListener('gesturestart', e => { if (overDiagram(e)) { e.preventDefault(); gScale = 1; } });
+$('canvas').addEventListener('gesturechange', e => {
+  if (!overDiagram(e)) return;
+  e.preventDefault();
+  const r = navTarget().el().getBoundingClientRect();
+  navZoom(e.scale / gScale, {x: e.clientX - r.left, y: e.clientY - r.top}); gScale = e.scale;
+});
+// Space+drag pans, also over a box or a call.
+let spaceDown = false, overCanvas = false;
+$('canvas').addEventListener('mouseenter', () => overCanvas = true);
+$('canvas').addEventListener('mouseleave', () => overCanvas = false);
+document.addEventListener('keydown', e => {
+  if (e.code !== 'Space' || !overCanvas || !navTarget() || e.target.closest?.('input, textarea, select, button, [contenteditable]')) return;
+  e.preventDefault(); spaceDown = true; $('canvas').classList.add('space');
+});
+document.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; $('canvas').classList.remove('space'); } });
+window.addEventListener('blur', () => { spaceDown = false; $('canvas').classList.remove('space'); });
+$('canvas').addEventListener('mousedown', e => { if (spaceDown && e.button === 0 && overDiagram(e)) { e.stopPropagation(); navDrag(e); } }, true);
+// Double-click on the background fits; on an item it keeps its own meaning.
+cy.on('dbltap', e => { if (e.target === cy) navFit(); });
+$('seq').addEventListener('dblclick', e => { if (!e.target.closest('[data-mid],[data-part],[data-life]')) navFit(); });
+cy.on('mouseover', 'node, edge', () => $('cy').style.cursor = 'pointer');
+cy.on('mouseout', 'node, edge', () => $('cy').style.cursor = '');
 
 // ---------- side panel ----------
 const badge = st => st ? `<span class="badge b-${st}">${st}</span>` : '';
@@ -3563,9 +3654,10 @@ function renderHeader() {
 }
 let showLegend = localStorage.getItem('archplan.legend') !== '0';
 function renderCanvasBar() {
-  const graph = $('cy').style.visibility !== 'hidden';
-  ['layoutBtn', 'fitBtn', 'zoomIn', 'zoomOut', 'connectBtn'].forEach(id => $(id).disabled = !graph);
-  $('zoomPct').textContent = graph ? Math.round(cy.zoom() * 100) + '%' : '';
+  const graph = $('cy').style.visibility !== 'hidden', nav = !!navTarget();
+  ['layoutBtn', 'connectBtn'].forEach(id => $(id).disabled = !graph);
+  ['fitBtn', 'zoomIn', 'zoomOut'].forEach(id => $(id).disabled = !nav);
+  zoomReadout();
   $('legendBtn').classList.toggle('on', showLegend);
   $('legend').style.display = showLegend && $('gloss').style.display !== 'block' ? '' : 'none';
 }
@@ -3574,12 +3666,11 @@ function renderViewBtn() {
   $('viewBtn').textContent = n ? `View · ${n} ▾` : 'View ▾';
   $('viewBtn').classList.toggle('on', !!n);
 }
-$('fitBtn').addEventListener('click', () => cy.fit(undefined, 40));
-const zoomBy = f => cy.zoom({level: Math.max(cy.minZoom(), Math.min(cy.maxZoom(), cy.zoom() * f)), renderedPosition: {x: cy.width() / 2, y: cy.height() / 2}});
-$('zoomIn').addEventListener('click', () => zoomBy(1.25));
-$('zoomOut').addEventListener('click', () => zoomBy(0.8));
+$('fitBtn').addEventListener('click', navFit);
+$('zoomIn').addEventListener('click', () => navZoom(ZSTEP));
+$('zoomOut').addEventListener('click', () => navZoom(1 / ZSTEP));
 $('legendBtn').addEventListener('click', () => { showLegend = !showLegend; localStorage.setItem('archplan.legend', showLegend ? '1' : '0'); renderCanvasBar(); });
-cy.on('zoom', () => { $('zoomPct').textContent = Math.round(cy.zoom() * 100) + '%'; });
+cy.on('zoom', zoomReadout);
 function setLeaves(on) { hideLeaves = on; localStorage.setItem('archplan.hideLeaves', on ? '1' : '0'); positions.components = {}; positions.types = {}; render(true); }
 $('viewReset').addEventListener('click', () => {
   hideLeaves = showExternal = false; seqFilter = ''; glossMode = 'map';
