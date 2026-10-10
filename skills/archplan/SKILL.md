@@ -44,7 +44,7 @@ pane, open it there.
 The human works in the editor while you work here. You learn about their
 comments three ways:
 
-- The plugin's `archplan` monitor starts with this skill and sends one event
+- The plugin's `archplan` monitor runs in every session and sends one event
   per new human comment, resolved thread or plan change. Act on each event.
 - At each user prompt a hook lists threads that wait on you.
 - `wait_for_comments` blocks until the human writes, when you have nothing else

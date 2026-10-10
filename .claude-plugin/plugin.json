@@ -1,6 +1,6 @@
 {
   "name": "archplan",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Plan architecture changes with a human in a browser editor: edit the target model, comment on components, types and calls, and let Claude answer and implement the plan.",
   "author": {
     "name": "Jeroen Vloothuis"
@@ -10,5 +10,8 @@
     "refactoring",
     "planning",
     "mcp"
-  ]
+  ],
+  "experimental": {
+    "monitors": "./monitors/monitors.json"
+  }
 }

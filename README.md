@@ -104,7 +104,7 @@ An exporter writes an [archmodel/1](src/archplan/format/archmodel.md) file.
   `.go-arch-lint.yml` when present, and seqtrace call traces with `-steps`.
 - **Python** (`pyproject.toml`, `setup.py`): `archplan export-python`, built in.
   It reads import-linter `forbidden` contracts as rules.
-- **Elixir** (`mix.exs`, in the root or one subdirectory):
+- **Elixir** (`mix.exs`, in the root or a subdirectory):
   `archplan export-elixir`, which needs `mix`. `archplan trace-elixir` runs
   tests and records call sequences. See [`exporters/elixir`](exporters/elixir).
 

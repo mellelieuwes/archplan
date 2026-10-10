@@ -116,11 +116,12 @@ class ProjectTest(TempProject):
 
 
 class DetectTest(unittest.TestCase):
-    def test_elixir_in_root_or_one_subdirectory(self):
+    def test_elixir_in_root_or_largest_subdirectory(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             self.assertIsNone(project.detect_export(root))
-            write(root, {"core/mix.exs": ""})
+            write(root, {"core/mix.exs": "", "core/lib/a.ex": "", "core/lib/b/c.ex": "",
+                         "proxy/mix.exs": "", "proxy/lib/a.ex": ""})
             self.assertEqual(project.detect_export(root),
                              "archplan export-elixir -C core -o .archplan/model.archmodel.json")
             write(root, {"mix.exs": ""})

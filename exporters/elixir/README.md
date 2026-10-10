@@ -12,8 +12,9 @@ It ships with archplan, in [`src/archplan/elixir`](../../src/archplan/elixir):
   and `archplan trace-elixir` run it.
 
 Nothing is added to the project. The scripts are loaded from the command line.
-`archplan init` picks this exporter when it finds a `mix.exs` in the root or in
-exactly one subdirectory.
+`archplan init` picks this exporter when it finds a `mix.exs` in the root or in a
+subdirectory. With several subdirectories, it takes the one with the most `.ex`
+files under `lib/`.
 
 ## Prerequisites
 

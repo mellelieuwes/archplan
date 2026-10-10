@@ -247,12 +247,15 @@ def detect_export(root: Path) -> str | None:
 
 
 def mix_dir(root: Path) -> Path | None:
-    """The Mix project: the root, or the only direct subdirectory with a mix.exs."""
+    """The Mix project: the root, or else the direct subdirectory with a mix.exs
+    and the most .ex files under lib/."""
     if (root / "mix.exs").is_file():
         return Path(".")
-    subs = sorted(d.relative_to(root) for d in root.iterdir()
-                  if d.is_dir() and not d.name.startswith(".") and (d / "mix.exs").is_file())
-    return subs[0] if len(subs) == 1 else None
+    subs = [d for d in sorted(root.iterdir())
+            if d.is_dir() and not d.name.startswith(".") and (d / "mix.exs").is_file()]
+    if not subs:
+        return None
+    return max(subs, key=lambda d: sum(1 for _ in (d / "lib").rglob("*.ex"))).relative_to(root)
 
 
 def init(root: Path, export: str | None = None, port: int | None = None, force: bool = False) -> Project:

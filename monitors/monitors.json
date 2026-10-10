@@ -3,6 +3,6 @@
     "name": "archplan",
     "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/archplan\" watch",
     "description": "archplan comments and plan changes from the human in the editor",
-    "when": "on-skill-invoke:archplan"
+    "when": "always"
   }
 ]
