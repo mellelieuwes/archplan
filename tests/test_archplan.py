@@ -129,6 +129,22 @@ class TrustTest(TempProject):
         self.assertFalse((self.root / "owned.txt").exists())
         with self.assertRaises(project.UntrustedExport):
             Agent(p).refresh_model()
+        # without a terminal, the command line cannot approve it either
+        r = subprocess.run([str(ROOT / "bin" / "archplan"), "trust"], cwd=self.root, capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL, timeout=30)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(p.trusted())
+
+    def test_prompt_shows_hidden_characters(self):
+        self.assertEqual(cli.shown("ls\x1b[2K\rmake\u202e"), "ls\\u001b[2K\\u000dmake\\u202e")
+
+    def test_own_exporter_ignores_planted_package(self):
+        write(self.root, {"archplan/__init__.py": "", "archplan/__main__.py": "open('owned.txt', 'w')\n",
+                          "archplan/cli.py": "open('owned.txt', 'w')\ndef main(argv=None): pass\n"})
+        p = project.init(self.root)
+        self.assertIn("archplan", p.export_command())
+        p.export()
+        self.assertFalse((self.root / "owned.txt").exists())
 
 
 class ServerTest(TempProject):

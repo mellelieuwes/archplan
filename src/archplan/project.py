@@ -206,13 +206,15 @@ class Project:
             raise UntrustedExport(
                 f"the export command in .archplan/config.json is not approved on this machine: {cmd!r}. "
                 "A person must run `archplan trust` (or `archplan export`) in a terminal once.")
-        if cmd.startswith("archplan "):
-            # Our own exporter: run it with this interpreter, so it works when
-            # archplan is not on the PATH (as in a plugin's bin/).
-            cmd = f"{shlex.quote(sys.executable)} -m archplan {cmd[len('archplan '):]}"
         env = os.environ.copy()
         pkg_parent = str(Path(__file__).resolve().parent.parent)
-        env["PYTHONPATH"] = pkg_parent + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        if cmd.startswith("archplan "):
+            # Our own exporter: run it with this interpreter, so it works when
+            # archplan is not on the PATH (as in a plugin's bin/). Isolated mode
+            # (-I) keeps the repository's own files off sys.path, so a planted
+            # archplan package in the root cannot take its place.
+            boot = f"import sys; sys.path.insert(0, {pkg_parent!r}); from archplan.cli import main; sys.exit(main())"
+            cmd = f"{shlex.quote(sys.executable)} -I -c {shlex.quote(boot)} {cmd[len('archplan '):]}"
         before = etag(self.model_path)
         r = subprocess.run(cmd, shell=True, cwd=self.root, capture_output=True, text=True, timeout=timeout, env=env)
         if r.returncode != 0:

@@ -117,8 +117,9 @@ that writes the model file or prints it on stdout.
   repository supplies it. The agent's `refresh_model` and the editor's "From
   code" button run it only after you approved that exact command on this
   machine: `archplan init` approves the command it writes; for a cloned
-  repository, run `archplan trust` (or `archplan export`, which asks).
-  Approvals live in `~/.config/archplan/trusted.json`.
+  repository, run `archplan trust` (or `archplan export`, which asks) in a
+  terminal. There is no flag to skip the question, so an agent cannot approve
+  a command. Approvals live in `~/.config/archplan/trusted.json`.
 - Thread and plan text renders as Markdown without raw HTML; links only open
   http(s) and mailto addresses. The editor's libraries ship with the package.
 

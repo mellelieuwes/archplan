@@ -76,30 +76,39 @@ def cmd_init(a):
               f"{p.model_path.relative_to(p.root)} (format: archmodel/1), then run archplan export")
 
 
-def confirm_trust(p: Project, yes: bool = False) -> None:
-    """Ask a person to approve the export command before it first runs here."""
+def shown(cmd: str) -> str:
+    """The command with control and invisible characters escaped, so a prompt
+    shows exactly what will run."""
+    return "".join(c if c.isprintable() else f"\\u{ord(c):04x}" for c in cmd)
+
+
+def confirm_trust(p: Project) -> None:
+    """Ask a person, at a terminal, to approve the export command before it
+    first runs here. There is no flag to skip this: an agent must not be able
+    to approve a command a cloned repository supplied."""
     if p.trusted() or not p.export_command():
         return
-    print(f"The export command in {p.dir / 'config.json'} is new on this machine:\n  {p.export_command()}",
+    print(f"The export command in {p.dir / 'config.json'} is new on this machine:\n  {shown(p.export_command())}",
           file=sys.stderr)
-    if not yes:
-        if not sys.stdin.isatty():
-            die("not approved; run `archplan trust` in a terminal after reading the command")
-        if input("Run it, and allow the agent and the editor to run it from now on? [y/N] ").strip().lower() not in ("y", "yes"):
-            die("not approved")
+    if not (sys.stdin.isatty() and sys.stderr.isatty()):
+        die("not approved; run `archplan trust` in a terminal after reading the command")
+    sys.stderr.write("Run it, and allow the agent and the editor to run it from now on? [y/N] ")
+    sys.stderr.flush()
+    if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+        die("not approved")
     p.trust()
 
 
 def cmd_trust(a):
     p = project(a)
-    confirm_trust(p, a.yes)
-    print(f"approved: {p.export_command()}")
+    confirm_trust(p)
+    print(f"approved: {shown(p.export_command())}")
 
 
 def cmd_export(a):
     p = project(a)
-    confirm_trust(p, getattr(a, "yes", False))
-    print(f"running: {p.export_command()}", file=sys.stderr)
+    confirm_trust(p)
+    print(f"running: {shown(p.export_command())}", file=sys.stderr)
     t = time.monotonic()
     try:
         c = p.export()
@@ -312,9 +321,7 @@ def main(argv=None):
     s.add_argument("--port", type=int)
     s.add_argument("--force", action="store_true")
     s = add("export", cmd_export, "re-export the as-is model from the code")
-    s.add_argument("--yes", action="store_true", help="approve a new export command without asking")
     s = add("trust", cmd_trust, "approve this repository's export command for the agent and the editor")
-    s.add_argument("--yes", action="store_true")
     s = add("serve", cmd_serve, "run the editor server in the foreground")
     s.add_argument("--port", type=int)
     s.add_argument("--bind", default="127.0.0.1")
