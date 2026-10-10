@@ -115,6 +115,18 @@ class ProjectTest(TempProject):
         self.assertEqual(p.state()["target_by"], "editor")
 
 
+class DetectTest(unittest.TestCase):
+    def test_elixir_in_root_or_one_subdirectory(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.assertIsNone(project.detect_export(root))
+            write(root, {"core/mix.exs": ""})
+            self.assertEqual(project.detect_export(root),
+                             "archplan export-elixir -C core -o .archplan/model.archmodel.json")
+            write(root, {"mix.exs": ""})
+            self.assertEqual(project.detect_export(root), "archplan export-elixir -o .archplan/model.archmodel.json")
+
+
 class TrustTest(TempProject):
     def test_export_needs_approval(self):
         p = project.init(self.root)

@@ -92,6 +92,7 @@ Commit `.archplan/` to share the target, plan and threads with your team.
 | `archplan watch` | one line per human comment or plan change |
 | `archplan hook` | Claude Code hook: report threads that wait on the agent |
 | `archplan export-python` | the built-in Python exporter |
+| `archplan export-elixir`, `archplan trace-elixir` | the Elixir exporter and test tracer |
 
 ## Exporters
 
@@ -103,6 +104,9 @@ An exporter writes an [archmodel/1](src/archplan/format/archmodel.md) file.
   `.go-arch-lint.yml` when present, and seqtrace call traces with `-steps`.
 - **Python** (`pyproject.toml`, `setup.py`): `archplan export-python`, built in.
   It reads import-linter `forbidden` contracts as rules.
+- **Elixir** (`mix.exs`, in the root or one subdirectory):
+  `archplan export-elixir`, which needs `mix`. `archplan trace-elixir` runs
+  tests and records call sequences. See [`exporters/elixir`](exporters/elixir).
 
 For another language, set `export` in `.archplan/config.json` to any command
 that writes the model file or prints it on stdout.

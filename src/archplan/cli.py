@@ -11,6 +11,8 @@
   archplan watch                 one line per human comment or plan change, for a monitor
   archplan hook                  Claude Code hook: tell the agent about new comments
   archplan export-python         built-in exporter for Python projects
+  archplan export-elixir         exporter for Elixir/Mix projects (needs mix)
+  archplan trace-elixir          run mix tests and record call sequences
 """
 
 from __future__ import annotations
@@ -304,7 +306,19 @@ def cmd_help(a):
         print(f"\nThis repository is set up: {root}/.archplan. Run `archplan status`.")
 
 
+def elixir(cmd: str, args: list) -> None:
+    """Run the shipped Elixir exporter: export-elixir and trace-elixir pass
+    their arguments to `archplan-elixir export|trace`."""
+    wrapper = Path(__file__).resolve().parent / "elixir" / "archplan-elixir"
+    os.execvp("sh", ["sh", str(wrapper), cmd, *args])
+
+
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ("export-elixir", "trace-elixir"):
+        if argv[1:2] in (["-h"], ["--help"]):
+            argv = [argv[0]]
+        elixir(argv[0].split("-")[0], argv[1:])
     ap = argparse.ArgumentParser(prog="archplan", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", action="version", version=f"archplan {__version__}")
     sub = ap.add_subparsers(dest="cmd", metavar="command")

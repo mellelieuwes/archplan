@@ -239,7 +239,20 @@ def detect_export(root: Path) -> str | None:
         return f"go run github.com/vloothuis/archplan/exporters/archplan-go@latest -o {out}"
     if any((root / f).is_file() for f in ("pyproject.toml", "setup.py", "setup.cfg")):
         return f"archplan export-python -o {out}"
+    mix = mix_dir(root)
+    if mix is not None:
+        c = f" -C {shlex.quote(str(mix))}" if str(mix) != "." else ""
+        return f"archplan export-elixir{c} -o {out}"
     return None
+
+
+def mix_dir(root: Path) -> Path | None:
+    """The Mix project: the root, or the only direct subdirectory with a mix.exs."""
+    if (root / "mix.exs").is_file():
+        return Path(".")
+    subs = sorted(d.relative_to(root) for d in root.iterdir()
+                  if d.is_dir() and not d.name.startswith(".") and (d / "mix.exs").is_file())
+    return subs[0] if len(subs) == 1 else None
 
 
 def init(root: Path, export: str | None = None, port: int | None = None, force: bool = False) -> Project:
