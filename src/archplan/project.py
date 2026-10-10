@@ -11,6 +11,7 @@ editor) and an agent (over MCP):
   plan.md, plan.json     the change plan, written by the editor
   threads.json           comment threads between human and agent
   suggestions.json       target edits the agent proposed, and the human's decisions
+  handovers.json         planned refactors the human sent the agent, with batches and progress
   activity.json          the agent's latest MCP call, for the editor; not committed
   hotspots.json          cached analysis of the git history; not committed
   server.json            the running editor server (url, pid); not committed

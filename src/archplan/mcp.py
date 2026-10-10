@@ -10,7 +10,8 @@ import sys
 from . import __version__, hotspots
 from .model import ANCHORS, EDIT_OPS, dumps, find_items, get_item, violations
 from .project import Project, ProjectError, counts, read_json, write_json
-from .store import Store, find, mentions, stamp, needs, wait, who_next
+from .handover import Handovers, progress
+from .store import MENTION, Store, find, mentions, stamp, needs, wait, who_next
 from .suggestions import Suggestions, propose
 
 DECISION = {"type": "boolean", "default": False,
@@ -29,9 +30,11 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_threads",
      "description": "List comment threads between the human architect and you. Each has an anchor, "
-                    "a status and waiting_on (agent, human or nobody). Start with waiting_on=agent. " + ANCHORS,
+                    "a status and waiting_on (agent, human or nobody). Start with waiting_on=agent. A planned "
+                    "thread is a refactor the human locked in; leave it alone until they send it to you "
+                    "(get_handover). " + ANCHORS,
      "inputSchema": {"type": "object", "properties": {
-         "status": {"type": "string", "enum": ["open", "resolved", "all"], "default": "open"},
+         "status": {"type": "string", "enum": ["open", "planned", "resolved", "all"], "default": "open"},
          "waiting_on": {"type": "string", "enum": ["agent", "human", "any"], "default": "any"}}}},
     {"name": "read_thread",
      "description": "Read one thread with all its messages, plus the model item or plan task it is anchored to. "
@@ -98,6 +101,34 @@ TOOLS = [
                     "Use it to stay in the conversation while the human works in the editor.",
      "inputSchema": {"type": "object", "properties": {
          "timeout_seconds": {"type": "integer", "default": 120, "maximum": 600}}}},
+    {"name": "get_handover",
+     "description": "The planned refactors the human sent you to implement, in order: per refactor its thread, "
+                    "title, summary, state, anchor, the items it mentions and a digest of the discussion; plus the "
+                    "current change plan. How to work it: with mode all, implement the refactors one by one in "
+                    "order. With mode batches, first call propose_batches (split or combine the refactors into "
+                    "batches of work), then wait until the human approves (the archplan monitor prints "
+                    "'batches approved'; get_handover shows status approved), then work batch by batch. For each "
+                    "refactor: set_refactor_state(in-progress), change the code, call refresh_model, "
+                    "set_refactor_state(done), and reply in its thread with what changed.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "propose_batches",
+     "description": "For a handover in mode batches: propose how to group the planned refactors into batches of "
+                    "work, each a branch or pull request you can finish and check on its own. Every refactor of "
+                    "the handover must be in exactly one batch. The human approves or edits the batches in the "
+                    "editor; do not start before that.",
+     "inputSchema": {"type": "object", "properties": {
+         "batches": {"type": "array", "items": {"type": "object", "properties": {
+             "title": {"type": "string"},
+             "refactors": {"type": "array", "items": {"type": "string"}, "description": "thread ids, in order"},
+             "notes": {"type": "string", "description": "why these go together, risks, order"}},
+             "required": ["title", "refactors"]}}}, "required": ["batches"]}},
+    {"name": "set_refactor_state",
+     "description": "Report progress on a refactor of the active handover: in-progress when you start it, done "
+                    "when the code is changed and refresh_model ran. The handover is done when all refactors are.",
+     "inputSchema": {"type": "object", "properties": {
+         "thread": {"type": "string"}, "state": {"type": "string", "enum": ["in-progress", "done"]},
+         "note": {"type": "string", "description": "short: what changed, or what blocks it"}},
+         "required": ["thread", "state"]}},
 ]
 
 INSTRUCTIONS = (
@@ -107,27 +138,35 @@ INSTRUCTIONS = (
     "needs_decision=true (with options) only when you cannot continue without the human's choice; everything else "
     "is feedback. After changing code, call refresh_model so the editor shows the remaining plan. Use edit_target "
     "to propose a refactor of the target when asked, instead of describing it in prose; the human accepts or "
-    "rejects it in the editor. Mention model items in messages as @[Label](anchor).")
+    "rejects it in the editor. Mention model items in messages as @[Label](anchor). Threads the human locked in "
+    "as planned refactors wait until the human sends them as a handover; then follow get_handover.")
 
 
 class Agent:
     def __init__(self, p: Project):
         self.p = p
         self.store = Store(p.dir)
+        self.handovers = Handovers(p.dir)
 
-    def summary(self, th: dict) -> dict:
+    def summary(self, th: dict, active: frozenset = frozenset()) -> dict:
         last = th["messages"][-1]
-        return {"id": th["id"], "anchor": th["anchor"], "label": th["label"], "status": th["status"],
-                "waiting_on": who_next(th), "human_needs": needs(th), "messages": len(th["messages"]),
-                "last": {"author": last["author"], "text": mentions(last["text"])}}
+        out = {"id": th["id"], "anchor": th["anchor"], "label": th["label"], "status": th["status"],
+               "waiting_on": who_next(th, active), "human_needs": needs(th, active), "messages": len(th["messages"]),
+               "last": {"author": last["author"], "text": mentions(last["text"])}}
+        if th.get("refactor"):
+            out["refactor"] = {k: th["refactor"].get(k) for k in ("title", "state", "order")}
+        return out
 
     def status(self):
         p = self.p
         srv = read_json(p.path("server.json"))
         model, target = read_json(p.model_path), read_json(p.target_path)
         plan = read_json(p.path("plan.json")) or {}
-        ths = [t for t in self.store.read()["threads"] if t["status"] == "open"]
+        d = self.store.read()
+        act = self.handovers.active_ids()
+        ths = [t for t in d["threads"] if t["status"] == "open" or t["id"] in act]
         sgs = Suggestions(p.dir).newest()
+        h = self.handovers.current()
         return {"project": p.name, "root": str(p.root),
                 "editor": srv["url"] if srv else "not running (run `archplan up`)",
                 "model": counts(model) if model else "none yet (call refresh_model)",
@@ -138,19 +177,24 @@ class Agent:
                 "suggestions": {"pending": sum(1 for x in sgs if x["status"] == "pending"),
                                 "recent": [{k: x[k] for k in ("id", "status", "note", "accepted")} | {"ops": len(x["ops"])}
                                            for x in sgs[:5]]},
-                "threads": {"waiting_on_agent": [self.summary(t) for t in ths if who_next(t) == "agent"],
-                            "waiting_on_human": sum(1 for t in ths if who_next(t) == "human")}}
+                "planned_refactors": sum(1 for t in d["threads"] if t["status"] == "planned"),
+                "handover": h and {"id": h["id"], "mode": h["mode"], "status": h["status"],
+                                   "refactors": len(h["refactors"]), "progress": progress(h, d),
+                                   "next": "call get_handover"},
+                "threads": {"waiting_on_agent": [self.summary(t, act) for t in ths if who_next(t, act) == "agent"],
+                            "waiting_on_human": sum(1 for t in ths if who_next(t, act) == "human")}}
 
     def list_threads(self, status="open", waiting_on="any"):
-        return [self.summary(th) for th in self.store.read()["threads"]
-                if (status == "all" or th["status"] == status) and (waiting_on == "any" or who_next(th) == waiting_on)]
+        act = self.handovers.active_ids()
+        return [self.summary(th, act) for th in self.store.read()["threads"]
+                if (status == "all" or th["status"] == status) and (waiting_on == "any" or who_next(th, act) == waiting_on)]
 
     def read_thread(self, id):
         th = dict(find(self.store.read(), id))
         th["messages"] = [{**m, "text": mentions(m["text"])} for m in th["messages"]]
         if "snapshot" in th:
             th["snapshot"] = snapshot_text(th["snapshot"])
-        return {**th, "waiting_on": who_next(th), "item": get_item(self.p, th["anchor"])}
+        return {**th, "waiting_on": who_next(th, self.handovers.active_ids()), "item": get_item(self.p, th["anchor"])}
 
     def reply(self, id, text, resolve=False, needs_decision=False, options=None):
         th = self.store.reply(id, text, "agent", "resolved" if resolve else None,
@@ -189,10 +233,60 @@ class Agent:
     def refresh_model(self):
         return {"counts": self.p.export(require_trust=True), "note": "The editor reloads the as-is model and rebases the target."}
 
+    def get_handover(self):
+        h = self.handovers.current()
+        if not h:
+            last = self.handovers.history(1)
+            return {"current": None, "message": "The human has not sent planned refactors. Keep answering threads.",
+                    "last": last[0]["status"] if last else None}
+        d = self.store.read()
+        ths = {t["id"]: t for t in d["threads"]}
+        refs = []
+        for n, tid in enumerate(h["refactors"], 1):
+            th = ths.get(tid)
+            if th is None:
+                refs.append({"n": n, "thread": tid, "missing": True})
+                continue
+            r = th.get("refactor") or {}
+            items = [th["anchor"]] + [m.group(2) for x in th["messages"] for m in MENTION.finditer(x["text"])]
+            refs.append({"n": n, "thread": tid, "title": r.get("title"), "summary": r.get("summary"),
+                         "state": r.get("state"), "note": r.get("note"), "anchor": th["anchor"],
+                         "mentions": list(dict.fromkeys(items[1:])),
+                         "discussion": digest(th)})
+        todo = {"all": "Implement the refactors in order.",
+                "batches": "Call propose_batches first, then wait for the human's approval."}[h["mode"]]
+        if h["status"] == "proposed":
+            todo = "Wait: the human reviews your batches. `archplan watch` reports the approval."
+        elif h["status"] in ("approved", "in-progress") and h["mode"] == "batches":
+            todo = "Work batch by batch, in the approved order."
+        return {**{k: h[k] for k in ("id", "mode", "note", "status", "batches", "created")},
+                "progress": progress(h, d), "todo": todo,
+                "after_each": "refresh_model, set_refactor_state(thread, done), reply in its thread",
+                "refactors": refs, "plan": self.get_plan()}
+
+    def propose_batches(self, batches):
+        h = self.handovers.propose(batches)
+        return {"handover": h["id"], "status": h["status"], "batches": h["batches"],
+                "message": "The human reviews the batches in the editor. Wait for the approval before you start."}
+
+    def set_refactor_state(self, thread, state, note=""):
+        h, th = self.handovers.set_state(self.store, thread, state, note)
+        return {"handover": h["id"], "status": h["status"], "thread": thread, "state": th["refactor"]["state"],
+                "progress": progress(h, self.store.read()),
+                "next": "Reply in the thread with what changed." if state == "done" else "Implement it."}
+
     def wait_for_comments(self, timeout_seconds=120):
         v = self.store.version()
         wait(self.store.version, v, min(int(timeout_seconds), 600))
         return self.list_threads("open", "agent")
+
+
+def digest(th: dict, n: int = 8, width: int = 300) -> list:
+    """The last n messages of a thread, one short line each."""
+    out = [f"{m['author']}: {' '.join(mentions(m['text']).split())[:width]}" for m in th["messages"][-n:]]
+    if len(th["messages"]) > n:
+        out.insert(0, f"({len(th['messages']) - n} earlier messages)")
+    return out
 
 
 def snapshot_text(snap) -> str:
@@ -244,15 +338,21 @@ ACTIVITY = {
     "refresh_model": "Re-exporting the model",
     "wait_for_comments": "Waiting for comments",
     "get_hotspots": "Analysing git history for hotspots",
+    "get_handover": "Reading the planned refactors",
+    "propose_batches": "Proposed how to split the refactors into batches",
+    "set_refactor_state": "{progress}",
 }
 DONE = {"refresh_model": "Re-exported the model"}  # long calls: a second entry when they finish
-AFTER = ("reply", "open_thread", "edit_target")  # recorded only when they succeed
+AFTER = ("reply", "open_thread", "edit_target", "propose_batches", "set_refactor_state")  # recorded only when they succeed
 
 
 def record(p: Project, store: Store, tool: str, args: dict, done: bool = False) -> None:
     """Write what the agent does now to .archplan/activity.json for the editor."""
     a = {k: str(v)[:80] for k, v in args.items() if isinstance(v, (str, int))}
     a["n"] = len(args.get("ops") or []) if isinstance(args.get("ops"), list) else 0
+    hs = Handovers(p.dir)
+    h = hs.current() or (hs.history(1) or [None])[0]
+    a["progress"] = progress(h, store.read()) if h else "Updated a refactor"
     try:
         text = (DONE if done else ACTIVITY).get(tool, tool).format_map(a)
     except (KeyError, ValueError):
@@ -268,6 +368,8 @@ def record(p: Project, store: Store, tool: str, args: dict, done: bool = False) 
             pass
     if anchor and anchor.split(":", 1)[0] in ("task", "step"):
         act["task"] = anchor.split(":", 1)[1].split("#")[0]
+    if h and h["status"] in ("approved", "in-progress"):
+        act["handover"] = {"id": h["id"], "progress": a["progress"]}
     try:
         write_json(p.path("activity.json"), act)
     except OSError:

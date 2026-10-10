@@ -258,6 +258,21 @@ class HookTest(TempProject):
         self.assertIn("look at this", self.run_hook({**ev, "session_id": "s2"}))
         self.assertEqual(self.run_hook({**ev, "cwd": tempfile.gettempdir()}), "")
 
+    def test_handover_and_planned(self):
+        from archplan import handover
+        p = project.init(self.root)
+        s = Store(p.dir)
+        th = s.create("comp:shop", "shop", "split it", "human")
+        handover.lock(s, th["id"], "Split shop")
+        ev = {"session_id": "s1", "hook_event_name": "UserPromptSubmit", "cwd": str(self.root)}
+        self.assertEqual(self.run_hook(ev), "")  # planned: not for the agent yet
+        h = handover.Handovers(p.dir).create(s, "batches")
+        out = self.run_hook(ev)
+        self.assertIn(f"handover {h['id']}", out)
+        self.assertIn("propose batches first", out)
+        self.assertIn("split it", out)  # the thread now waits on the agent
+        self.assertEqual(self.run_hook(ev), "")
+
 
 class McpTest(TempProject):
     def test_stdio(self):
@@ -483,6 +498,107 @@ class ThreadExtrasTest(TempProject):
                          (f"Replied in thread {th['id']}", th["id"], "split-orders"))
         record(p, Store(p.dir), "edit_target", {"ops": [{}, {}]})
         self.assertEqual(json.loads(p.path("activity.json").read_text())["summary"], "Proposed 2 change(s)")
+
+
+class RefactorTest(TempProject):
+    def setUp(self):
+        super().setUp()
+        self.p = project.init(self.root)
+        self.p.export()
+        self.s = Store(self.p.dir)
+        self.ids = [self.s.create(f"comp:shop.{x}", x, f"refactor {x}?", "human")["id"] for x in ("a", "b", "c")]
+        self.srv, self.url = serve_in_thread(self.p)
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        super().tearDown()
+
+    def test_lock_unlock_order(self):
+        a, b, c = self.ids
+        st, th = call(self.url, f"/api/threads/{a}/lock", "POST", {"title": "Split A", "summary": "Move x"})
+        self.assertEqual((st, th["status"], th["refactor"]["order"], th["refactor"]["state"]), (200, "planned", 1, "planned"))
+        self.s.reply(b, "", "human", status="resolved")
+        self.assertEqual(call(self.url, f"/api/threads/{b}/lock", "POST", {"title": "B"})[1]["refactor"]["order"], 2)
+        self.assertEqual(call(self.url, f"/api/threads/{a}/lock", "POST", {})[0], 409)
+        self.assertEqual(call(self.url, "/api/threads/th-nope/lock", "POST", {})[0], 404)
+        # a reply keeps it planned, and planned threads do not wait on the agent
+        self.s.reply(a, "one more thing", "human", status="open")
+        self.assertEqual(self.s.read()["threads"][0]["status"], "planned")
+        self.assertEqual([t["id"] for t in Agent(self.p).list_threads(waiting_on="agent")], [c])
+        self.assertEqual([t["id"] for t in Agent(self.p).status()["threads"]["waiting_on_agent"]], [c])
+        st, th = call(self.url, f"/api/threads/{a}/refactor", "PUT", {"summary": "Move x and y"})
+        self.assertEqual((th["refactor"]["title"], th["refactor"]["summary"]), ("Split A", "Move x and y"))
+        self.assertEqual(call(self.url, f"/api/threads/{c}/refactor", "PUT", {"title": "x"})[0], 409)
+        st, d = call(self.url, "/api/refactors/order", "PUT", {"ids": [b, a]})
+        self.assertEqual([(t["id"], t["refactor"]["order"]) for t in d["refactors"]], [(b, 1), (a, 2)])
+        self.assertEqual(call(self.url, "/api/refactors/order", "PUT", {"ids": [c]})[0], 400)
+        st, th = call(self.url, f"/api/threads/{b}/unlock", "POST", {})
+        self.assertEqual((th["status"], "refactor" in th), ("open", False))
+
+    def test_handover_batches(self):
+        a, b, c = self.ids
+        self.assertEqual(call(self.url, "/api/handover", "POST", {"mode": "batches"})[0], 400)  # nothing planned
+        for t in (a, b):
+            call(self.url, f"/api/threads/{t}/lock", "POST", {"title": t})
+        key = call(self.url, "/api/handover")[1]["key"]
+        st, h = call(self.url, "/api/handover", "POST", {"mode": "batches", "note": "small PRs"})
+        self.assertEqual((st, h["status"], h["refactors"]), (200, "sent", [a, b]))
+        self.assertEqual(call(self.url, "/api/handover", "POST", {"mode": "all"})[0], 409)
+        d = call(self.url, "/api/handover")[1]
+        self.assertEqual((d["current"]["id"], d["history"]), (h["id"], []))
+        self.assertNotEqual(d["key"], key)
+        self.assertEqual(call(self.url, f"/api/threads/{a}/unlock", "POST", {})[0], 409)
+        ag = Agent(self.p)
+        self.assertEqual(ag.status()["handover"]["status"], "sent")
+        self.assertEqual({t["id"] for t in ag.list_threads("all", "agent")}, {a, b, c})  # now they wait on the agent
+        g = ag.get_handover()
+        self.assertEqual([r["thread"] for r in g["refactors"]], [a, b])
+        self.assertIn("propose_batches", g["todo"])
+        with self.assertRaises(Conflict):  # batches first
+            ag.set_refactor_state(a, "in-progress")
+        for bad in ([{"title": "x", "refactors": [a]}], [{"title": "x", "refactors": [a, b, a]}],
+                    [{"title": "x", "refactors": [a, b, c]}], []):
+            with self.assertRaises(ValueError):
+                ag.propose_batches(bad)
+        self.assertEqual(ag.propose_batches([{"title": "one", "refactors": [b]}, {"title": "two", "refactors": [a]}])["status"],
+                         "proposed")
+        self.assertEqual(call(self.url, "/api/handover/ho-nope/approve", "POST", {})[0], 404)
+        st, h2 = call(self.url, f"/api/handover/{h['id']}/approve", "POST",
+                      {"batches": [{"title": "both", "refactors": [a, b], "notes": "edited"}]})
+        self.assertEqual((h2["status"], len(h2["batches"]), h2["decided"] is not None), ("approved", 1, True))
+        self.assertEqual(call(self.url, f"/api/handover/{h['id']}/approve", "POST", {})[0], 409)
+        out = ag.set_refactor_state(a, "in-progress")
+        self.assertEqual((out["status"], out["progress"]), ("in-progress", f"Working on refactor 1 of 2: {a}"))
+        ag.set_refactor_state(a, "done", note="moved")
+        out = ag.set_refactor_state(b, "done")
+        self.assertEqual(out["status"], "done")
+        d = call(self.url, "/api/handover")[1]
+        self.assertEqual((d["current"], d["history"][0]["status"]), (None, "done"))
+        self.assertEqual(ag.status()["threads"]["waiting_on_agent"][0]["id"], c)
+
+    def test_handover_all_and_cancel(self):
+        from archplan.watch import handover_line
+        a, b, c = self.ids
+        for t in (a, b):
+            call(self.url, f"/api/threads/{t}/lock", "POST", {"title": t})
+        st, h = call(self.url, "/api/handover", "POST", {"mode": "all", "note": "go"})
+        self.assertEqual(handover_line(h, None), f"handover {h['id']} sent: 2 planned refactors, all in one go: go. "
+                                                 "Call get_handover.")
+        ag = Agent(self.p)
+        with self.assertRaises(Conflict):
+            ag.propose_batches([{"title": "x", "refactors": [a, b]}])
+        self.assertEqual(ag.set_refactor_state(a, "done")["status"], "in-progress")
+        ag.set_refactor_state(b, "in-progress")
+        st, h = call(self.url, f"/api/handover/{h['id']}/cancel", "POST", {})
+        self.assertEqual(h["status"], "cancelled")
+        self.assertEqual(handover_line(h, "in-progress"), f"handover {h['id']} cancelled")
+        states = {t["id"]: t["refactor"]["state"] for t in self.s.read()["threads"] if t.get("refactor")}
+        self.assertEqual(states, {a: "done", b: "planned"})  # done work stays done
+        self.assertEqual(call(self.url, f"/api/handover/{h['id']}/cancel", "POST", {})[0], 409)
+        self.assertEqual([t["id"] for t in ag.list_threads(waiting_on="agent")], [c])
+        # a new handover takes only the refactors that are not done
+        self.assertEqual(call(self.url, "/api/handover", "POST", {"mode": "all"})[1]["refactors"], [b])
 
 
 if __name__ == "__main__":

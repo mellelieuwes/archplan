@@ -13,10 +13,11 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import hotspots
+from . import handover, hotspots
 from .project import Project, ProjectError, UntrustedExport, etag, read_json, write_atomic, write_json
-from .store import Store, wait
-from .suggestions import Conflict, Suggestions, pick, preview
+from .handover import Handovers
+from .store import Conflict, NotFound, Store, wait
+from .suggestions import Suggestions, pick, preview
 
 LONG_POLL = 25.0  # seconds the editor's request for changes may wait
 STATIC = Path(str(resources.files("archplan") / "static"))
@@ -24,12 +25,15 @@ STATIC = Path(str(resources.files("archplan") / "static"))
 
 def changes(p: Project, store: Store) -> dict:
     """What the editor polls for: threads, the as-is model, the target revision,
-    the agent's suggestions and its last activity. key changes when any does."""
+    the agent's suggestions, the handover and the agent's last activity. key
+    changes when any does."""
     st = p.state()
     c = {"version": store.version(), "model_etag": etag(p.model_path),
          "target_rev": st.get("target_rev", 0), "target_by": st.get("target_by"),
-         "suggestions_version": Suggestions(p.dir).version(), "activity_etag": etag(p.path("activity.json"))}
-    c["key"] = ".".join(str(c[k]) for k in ("version", "model_etag", "target_rev", "suggestions_version", "activity_etag"))
+         "suggestions_version": Suggestions(p.dir).version(), "handover_version": Handovers(p.dir).version(),
+         "activity_etag": etag(p.path("activity.json"))}
+    c["key"] = ".".join(str(c[k]) for k in ("version", "model_etag", "target_rev", "suggestions_version",
+                                            "handover_version", "activity_etag"))
     return c
 
 
@@ -37,6 +41,7 @@ def make_handler(p: Project, store: Store):
     export_lock = threading.Lock()
     hotspot_lock = threading.Lock()
     suggestions = Suggestions(p.dir)
+    handovers = Handovers(p.dir)
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
@@ -124,6 +129,9 @@ def make_handler(p: Project, store: Store):
                 return self.send_json({**store.read(), **changes(p, store)})
             if path == "/api/activity":
                 return self.send_json(read_json(p.path("activity.json"), {}) or {})
+            if path == "/api/handover":
+                return self.send_json({"current": handovers.current(), "history": handovers.history(10),
+                                       **changes(p, store)})
             if path == "/api/suggestions":
                 return self.send_json({"suggestions": suggestions.newest(), **changes(p, store)})
             parts = path.strip("/").split("/")
@@ -134,7 +142,7 @@ def make_handler(p: Project, store: Store):
                     idx = None if ops is None else [int(x) for x in unquote(ops).split(",") if x.strip()]
                     m, done = preview(p, sg, idx)
                     return self.send_json({"target": m, "applied": done, "ops": pick(sg, idx)})
-                except KeyError as e:
+                except NotFound as e:
                     return self.send_json({"error": str(e).strip("'\"")}, HTTPStatus.NOT_FOUND)
                 except Conflict as e:
                     return self.send_json({"error": str(e)}, HTTPStatus.CONFLICT)
@@ -173,13 +181,18 @@ def make_handler(p: Project, store: Store):
                     idx = [] if parts[3] == "reject" else b.get("ops")
                     if parts[3] == "accept" and idx is not None and (not isinstance(idx, list) or not idx):
                         raise ValueError("ops must be a non-empty list of op indices; reject to accept none")
-                    try:
-                        sg = suggestions.decide(p, parts[2], idx)
-                    except KeyError as e:
-                        return self.send_json({"error": str(e).strip("'\"")}, HTTPStatus.NOT_FOUND)
-                    except Conflict as e:
-                        return self.send_json({"error": str(e)}, HTTPStatus.CONFLICT)
+                    sg = suggestions.decide(p, parts[2], idx)
                     return self.send_json({"suggestion": sg, **changes(p, store)})
+                if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "lock":
+                    return self.send_json(handover.lock(store, parts[2], b.get("title", ""), b.get("summary", "")))
+                if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "unlock":
+                    return self.send_json(handover.unlock(store, handovers, parts[2]))
+                if parts == ["api", "handover"]:
+                    return self.send_json(handovers.create(store, b.get("mode", "all"), b.get("note", "")))
+                if len(parts) == 4 and parts[:2] == ["api", "handover"] and parts[3] == "approve":
+                    return self.send_json(handovers.approve(store, parts[2], b.get("batches")))
+                if len(parts) == 4 and parts[:2] == ["api", "handover"] and parts[3] == "cancel":
+                    return self.send_json(handovers.cancel(store, parts[2]))
                 if parts == ["api", "export"]:
                     if not export_lock.acquire(blocking=False):
                         return self.send_json({"error": "an export is already running"}, HTTPStatus.CONFLICT)
@@ -189,6 +202,10 @@ def make_handler(p: Project, store: Store):
                         export_lock.release()
             except UntrustedExport as e:
                 return self.send_json({"error": str(e)}, HTTPStatus.FORBIDDEN)
+            except NotFound as e:
+                return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
+            except Conflict as e:
+                return self.send_json({"error": str(e)}, HTTPStatus.CONFLICT)
             except ProjectError as e:
                 return self.send_json({"error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR)
             except (KeyError, TypeError, ValueError) as e:
@@ -198,16 +215,28 @@ def make_handler(p: Project, store: Store):
         def do_PUT(self):
             if self.refuse():
                 return
-            b = self.body() or {}
-            if self.path == "/api/target":
-                rev = p.save_target(b["target"], "editor", b.get("base_etag"))
-                if "intent" in b:
-                    p.set_state(intent=b["intent"])
-                return self.send_json({"ok": True, "target_rev": rev})
-            if self.path == "/api/plan":
-                write_atomic(p.path("plan.md"), b.get("md", ""))
-                write_atomic(p.path("plan.json"), b.get("json", "{}"))
-                return self.send_json({"ok": True})
+            parts = self.path.strip("/").split("/")
+            try:
+                b = self.body() or {}
+                if self.path == "/api/target":
+                    rev = p.save_target(b["target"], "editor", b.get("base_etag"))
+                    if "intent" in b:
+                        p.set_state(intent=b["intent"])
+                    return self.send_json({"ok": True, "target_rev": rev})
+                if self.path == "/api/plan":
+                    write_atomic(p.path("plan.md"), b.get("md", ""))
+                    write_atomic(p.path("plan.json"), b.get("json", "{}"))
+                    return self.send_json({"ok": True})
+                if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "refactor":
+                    return self.send_json(handover.edit(store, parts[2], b.get("title"), b.get("summary")))
+                if parts == ["api", "refactors", "order"]:
+                    return self.send_json({"refactors": handover.reorder(store, b.get("ids")), **changes(p, store)})
+            except NotFound as e:
+                return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
+            except Conflict as e:
+                return self.send_json({"error": str(e)}, HTTPStatus.CONFLICT)
+            except (KeyError, TypeError, ValueError) as e:
+                return self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
             self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
     return Handler
@@ -216,6 +245,8 @@ def make_handler(p: Project, store: Store):
 def free_port(host: str, start: int, tries: int = 20) -> int:
     for port in range(start, start + tries):
         with socket.socket() as s:
+            # Match the server's own option, so a port in TIME_WAIT after a restart is reused.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind((host, port))
                 return port

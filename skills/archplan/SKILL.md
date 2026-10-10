@@ -45,8 +45,9 @@ The human works in the editor while you work here. You learn about their
 comments three ways:
 
 - The plugin's `archplan` monitor runs in every session and sends one event
-  per new human comment, resolved thread, plan change, or suggestion the
-  human accepted, partly accepted or rejected. Act on each event.
+  per new human comment, resolved thread, plan change, suggestion the human
+  accepted, partly accepted or rejected, and handover the human sent,
+  approved or cancelled. Act on each event.
 - At each user prompt a hook lists threads that wait on you.
 - `wait_for_comments` blocks until the human writes, when you have nothing else
   to do and the user asked you to keep watching.
@@ -96,7 +97,39 @@ from `status`. After an accept, `get_plan` shows the tasks the change implies;
 summarise them in the thread and ask whether to implement. After a reject,
 ask in the thread what to change, or let it go.
 
-## 7. Implement
+## 7. Planned refactors and the handover
+
+When a discussion is settled, the human locks the thread in as a planned
+refactor. It moves to a stack of planned refactors and no longer waits on you.
+Do not implement it yet, even when the human replies in it.
+
+When the human is happy with all of them, they send the whole stack as one
+handover. The monitor prints `handover ho-... sent`, and the prompt hook says
+so too. Call `get_handover`. It lists each refactor in order with its title,
+summary, anchor, mentioned items and a digest of the discussion, plus the
+current plan.
+
+- Mode `all`: implement the refactors in order.
+- Mode `batches`: the human wants a split first. Group the refactors into
+  batches of work that you can finish and check one at a time, each a branch
+  or pull request. Every refactor goes in exactly one batch. Send them with
+  `propose_batches`, then wait. The monitor prints `batches approved` when the
+  human agrees (they may have edited the batches; read them again with
+  `get_handover`). Then work batch by batch.
+
+For each refactor:
+
+1. `set_refactor_state(thread, "in-progress")`.
+2. Change the code (see Implement below).
+3. `refresh_model`.
+4. `set_refactor_state(thread, "done", note)`.
+5. `reply` in its thread: what changed, and what is left.
+
+The handover is done when all its refactors are. If the monitor prints
+`handover ... cancelled`, stop and ask the human what to do with the work in
+progress.
+
+## 8. Implement
 
 - Work on a new branch or in a git worktree, never on the user's current
   branch without asking. Commit only when the user agreed; never push without

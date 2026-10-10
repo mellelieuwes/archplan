@@ -31,6 +31,7 @@ from pathlib import Path
 
 from . import __version__
 from .project import Project, ProjectError, counts, find_root, init, read_json, write_json
+from .handover import Handovers
 from .store import Store, mentions, needs, who_next
 
 
@@ -191,17 +192,21 @@ def cmd_status(a):
     print(f"threads  {len(w)} waiting on the agent, {s['threads']['waiting_on_human']} on the human")
     for t in w:
         print(f"  {t['id']}  {t['label'][:60]}: {t['last']['text'][:100]}")
+    h = s["handover"]
+    print(f"refactors {s['planned_refactors']} planned"
+          + (f"; handover {h['id']} ({h['mode']}, {h['status']}): {h['progress']}" if h else ""))
 
 
 def cmd_threads(a):
     p = project(a)
+    act = Handovers(p.dir).active_ids()
     for t in Store(p.dir).read()["threads"]:
         if t["status"] != "open" and not a.all:
             continue
-        if a.waiting != "any" and who_next(t) != a.waiting:
+        if a.waiting != "any" and who_next(t, act) != a.waiting:
             continue
-        flag = needs(t) or ""
-        print(f"{t['id']}  [{t['status']}, waiting on {who_next(t)}{', ' + flag if flag else ''}]  {t['label']}")
+        flag = needs(t, act) or ""
+        print(f"{t['id']}  [{t['status']}, waiting on {who_next(t, act)}{', ' + flag if flag else ''}]  {t['label']}")
         for m in t["messages"]:
             print(f"    {m['author']}: {' '.join(mentions(m['text']).split())[:300]}")
 
@@ -248,19 +253,34 @@ def cmd_hook(a):
     sid = ev.get("session_id", "")
     if seen.get("session") != sid:
         seen = {"session": sid, "threads": {}}
+    hs = Handovers(p.dir)
+    act = hs.active_ids()
     new = []
     for t in Store(p.dir).read()["threads"]:
-        if who_next(t) == "agent" and seen["threads"].get(t["id"]) != len(t["messages"]):
+        if who_next(t, act) == "agent" and seen["threads"].get(t["id"]) != len(t["messages"]):
             new.append(t)
             seen["threads"][t["id"]] = len(t["messages"])
-    if ev.get("hook_event_name") == "SessionStart" or new:
+    # A handover waits on the agent when sent, or when its batches were approved.
+    h = hs.current()
+    ho = f"{h['id']}:{h['status']}" if h and h["status"] in ("sent", "approved") else None
+    ho_new = ho is not None and seen.get("handover") != ho
+    if ho_new:
+        seen["handover"] = ho
+    if ev.get("hook_event_name") == "SessionStart" or new or ho_new:
         write_json(seen_path, seen)
-    if not new:
+    if not new and not ho_new:
         return
     url = running(p)
-    lines = [f"archplan: {len(new)} comment thread(s) in {p.name} wait on you"
-             + (f" (editor {url})" if url else "") + ". Read them with the archplan MCP tools "
-             "(read_thread, then reply in the thread); use the /archplan skill for the workflow."]
+    lines = []
+    if ho_new:
+        what = ("the batches are approved: work batch by batch" if h["status"] == "approved"
+                else "implement them in order" if h["mode"] == "all" else "propose batches first")
+        lines.append(f"archplan: the human sent {len(h['refactors'])} planned refactors in {p.name} "
+                     f"(handover {h['id']}); {what}. Call get_handover for the details.")
+    if new:
+        lines.append(f"archplan: {len(new)} comment thread(s) in {p.name} wait on you"
+                     + (f" (editor {url})" if url else "") + ". Read them with the archplan MCP tools "
+                     "(read_thread, then reply in the thread); use the /archplan skill for the workflow.")
     for t in new[:10]:
         last = " ".join(mentions(t["messages"][-1]["text"]).split())
         lines.append(f"- {t['id']} on {t['label'][:80]}: {last[:200]}")

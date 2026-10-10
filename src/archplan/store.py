@@ -17,6 +17,18 @@ from pathlib import Path
 from .project import write_json
 
 
+class NotFound(KeyError):
+    """No thread, suggestion or handover with that id."""
+
+    def __str__(self):
+        return str(self.args[0]) if self.args else "not found"
+
+
+class Conflict(ValueError):
+    """A change the item's current state does not allow, such as unlocking a
+    refactor the agent is working on, or deciding a suggestion twice."""
+
+
 SNAPSHOT_MAX = 64 * 1024  # bytes of JSON a thread's graph snapshot may take
 
 
@@ -86,7 +98,12 @@ class Store(JsonStore):
             now = stamp()
             if text:
                 th["messages"].append(message(author, text, now, kind, options))
-            if status:
+            if th["status"] == "planned":
+                # A reply keeps a planned refactor planned. Only a finished one may be resolved;
+                # unlock() reopens it.
+                if status == "resolved" and th.get("refactor", {}).get("state") == "done":
+                    th["status"] = status
+            elif status:
                 th["status"] = status
             th["updated"] = now
             return th
@@ -115,7 +132,7 @@ def find(d: dict, tid: str) -> dict:
     for th in d["threads"]:
         if th["id"] == tid:
             return th
-    raise KeyError(f"no thread {tid}")
+    raise NotFound(f"no thread {tid}")
 
 
 def stamp() -> str:
@@ -133,16 +150,18 @@ def message(author: str, text: str, at: str, kind: str | None, options: list | N
     return m
 
 
-def who_next(th: dict) -> str:
-    """Who should answer next: the agent when the human spoke last."""
-    if th["status"] != "open":
+def who_next(th: dict, active: frozenset = frozenset()) -> str:
+    """Who should answer next: the agent when the human spoke last. A planned
+    refactor waits on nobody until it is part of an active handover (active
+    holds the thread ids of that handover)."""
+    if th["status"] != "open" and not (th["status"] == "planned" and th["id"] in active):
         return "nobody"
     return "human" if th["messages"][-1]["author"] == "agent" else "agent"
 
 
-def needs(th: dict) -> str | None:
+def needs(th: dict, active: frozenset = frozenset()) -> str | None:
     """What the human owes a thread the agent spoke last in: 'decision' or 'feedback'."""
-    if who_next(th) != "human":
+    if who_next(th, active) != "human":
         return None
     return th["messages"][-1].get("kind", "feedback")
 

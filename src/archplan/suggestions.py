@@ -10,13 +10,9 @@ import uuid
 
 from .model import edited, save_edited, violations
 from .project import Project
-from .store import JsonStore, stamp
+from .store import Conflict, JsonStore, NotFound, stamp
 
 STATUSES = ("pending", "accepted", "rejected", "partial")
-
-
-class Conflict(ValueError):
-    """A suggestion that was already decided, or an op that no longer applies."""
 
 
 class Suggestions(JsonStore):
@@ -58,7 +54,7 @@ def find(d: dict, sid: str) -> dict:
     for sg in d["suggestions"]:
         if sg["id"] == sid:
             return sg
-    raise KeyError(f"no suggestion {sid}")
+    raise NotFound(f"no suggestion {sid}")
 
 
 def pick(sg: dict, indices: list | None) -> list:

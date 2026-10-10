@@ -61,6 +61,9 @@ archplan up        # starts the editor in the background and prints its URL
 | Read replies: orange **decision** threads need your choice (click an option); **feedback** threads only need reading | Replies with `reply`, marks a reply as a decision only when it is blocked on you |
 | Preview a suggestion and accept all, some or none of its changes | Proposes a refactor of the target with `edit_target`; learns the outcome from the monitor |
 | Look at hotspots and components that change together | Finds hidden coupling in the git history with `get_hotspots` and opens a thread on it |
+| Lock in a settled thread as a planned refactor, then go on with the open discussions | Leaves planned refactors alone; they do not wait on it |
+| Order the planned refactors and send them all as one handover: all in one go, or ask for a split first | Reads them with `get_handover`; for a split, proposes batches with `propose_batches` |
+| Approve or edit the proposed batches | Works refactor by refactor: `set_refactor_state`, code, `refresh_model`, a reply in the thread |
 | Watch the plan shrink | Implements a task, then calls `refresh_model`; the editor reloads the code model and rebases your target onto it |
 
 Everything is stored in `.archplan/` in the repository:
@@ -75,6 +78,7 @@ Everything is stored in `.archplan/` in the repository:
 | `plan.md`, `plan.json` | the change plan, written by the editor |
 | `threads.json` | the comment threads |
 | `suggestions.json` | target changes the agent proposed, and what you decided |
+| `handovers.json` | planned refactors you sent to the agent, its batches and progress |
 | `activity.json` | what the agent did last, shown in the editor |
 | `hotspots.json` | the cached git history analysis |
 

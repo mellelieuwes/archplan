@@ -58,13 +58,8 @@ button.pill{cursor:pointer}
 .sep{height:1px;background:var(--line);margin:4px 2px}
 .mh{font-size:12px;text-transform:uppercase;color:var(--mute);padding:7px 9px 3px;letter-spacing:.04em;font-weight:600}
 main{display:flex;height:calc(100% - 48px)}
-/* outline */
-#outline{width:148px;flex:none;border-right:1px solid var(--line);background:var(--panel);padding:18px 8px;font-size:13px;overflow:auto}
-#outline .mh{padding-left:8px}
-.ol{display:flex;padding:4px 8px;border-radius:6px;cursor:pointer;gap:6px}.ol:hover{background:var(--soft)}.ol .n{margin-left:auto;color:var(--mute)}.ol .n.warn{color:var(--chg);font-weight:600}
-@media (max-width:1250px){#outline{display:none}}
 /* plan document and item pages */
-aside#doc{width:480px;flex:none;background:var(--panel);display:flex;flex-direction:column;min-height:0}
+aside#doc{width:min(628px,46vw);flex:none;background:var(--panel);display:flex;flex-direction:column;min-height:0}
 #panel{flex:1;overflow:auto;padding:18px 22px 60px}
 #split{width:7px;margin:0 -3px;cursor:col-resize;z-index:5;flex:none;position:relative}
 #split::after{content:"";position:absolute;left:3px;top:0;bottom:0;width:1px;background:var(--line)}
@@ -189,11 +184,11 @@ input.tg:checked{background:var(--acc)}input.tg::after{content:"";position:absol
 #emptyMsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:5}#emptyMsg div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;max-width:380px;font-size:14px;pointer-events:auto;text-align:center}
 #needFocus{position:absolute;inset:0;display:none;align-items:center;justify-content:center;pointer-events:none}#needFocus div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;max-width:380px;font-size:14px;color:var(--mute);pointer-events:auto}
 body.drop #stage{outline:3px dashed var(--acc);outline-offset:-6px}
-#help,#palette{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:60;display:flex;align-items:flex-start;justify-content:center;padding-top:6vh}
-#help[hidden],#palette[hidden]{display:none}
-#help .box{background:var(--panel);border-radius:10px;max-width:640px;max-height:86vh;overflow:auto;padding:18px 24px;font-size:14px;line-height:1.5;position:relative;box-shadow:0 10px 40px rgba(0,0,0,.25)}
-#help h2{margin:0 0 6px;font-size:19px}#help h3{margin:16px 0 4px;font-size:15px}#help ol,#help ul{padding-left:20px;margin:4px 0}#help li{margin:4px 0}
-#help .close{position:absolute;right:12px;top:12px}
+#help,#palette,#hoDlg{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:60;display:flex;align-items:flex-start;justify-content:center;padding-top:6vh}
+#help[hidden],#palette[hidden],#hoDlg[hidden]{display:none}
+#help .box,#hoDlg .box{background:var(--panel);border-radius:10px;max-width:640px;max-height:86vh;overflow:auto;padding:18px 24px;font-size:14px;line-height:1.5;position:relative;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+#help h2,#hoDlg h2{margin:0 0 6px;font-size:19px}#help h3,#hoDlg h3{margin:16px 0 4px;font-size:15px}#help ol,#help ul{padding-left:20px;margin:4px 0}#help li{margin:4px 0}
+#help .close,#hoDlg .close{position:absolute;right:12px;top:12px}
 #help table{border-collapse:collapse;width:100%}#help td{padding:3px 6px;border-bottom:1px solid var(--soft);vertical-align:top}#help td:first-child{white-space:nowrap;width:150px}
 #palette .box{background:var(--panel);border-radius:10px;width:560px;max-width:92vw;box-shadow:0 10px 40px rgba(0,0,0,.25);overflow:hidden}
 #palIn{width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:12px 14px;font-size:16px;outline:none}
@@ -210,6 +205,25 @@ body.drop #stage{outline:3px dashed var(--acc);outline-offset:-6px}
 #edgeAct{position:absolute;display:none;z-index:6;gap:4px}
 #edgeAct .btn{box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:13px;padding:3px 8px}
 body.connect-mode #cy,#cy.connecting{cursor:crosshair}
+/* planned refactors and the handover */
+.wait.plan{background:var(--addbg);color:var(--add-ink)}.thread.planned{border-color:var(--add-line)}
+.lockform{display:grid;gap:6px;margin-top:6px;padding:8px;border-radius:8px;background:var(--soft)}.lockform label{display:grid;gap:2px;font-size:13px;color:var(--mute)}
+.rf{border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin:8px 0;background:var(--panel)}.rf[draggable=true]{cursor:grab}
+.rf.drop-before{box-shadow:0 -3px 0 var(--acc)}.rf.drop-after{box-shadow:0 3px 0 var(--acc)}.rf.dragging{opacity:.4}
+.rf-h{display:flex;gap:8px;align-items:baseline}.rf-h .tt{font-weight:600;flex:1}
+.rf-n{flex:none;width:22px;height:22px;border-radius:50%;background:var(--sel-chip);color:var(--sel-ink);display:inline-grid;place-items:center;font-size:12px;font-weight:600}
+.rf-sum{margin:3px 0 0 30px;font-size:13.5px}.rf-sum p{margin:2px 0}.rf .chips,.rf .row,.rf .rf-note{margin-left:30px}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}.chips .chip{border:0;font:inherit;font-size:12.5px;padding:1px 8px;cursor:pointer}
+.rf-note{font-size:13px;color:var(--agent-ink)}
+.st{font-size:12px;border-radius:4px;padding:0 6px;white-space:nowrap}.st.planned{background:var(--chip);color:var(--chip-ink)}.st.in-progress{background:var(--agent-bg);color:var(--agent-ink)}.st.done{background:var(--addbg);color:var(--add-ink)}
+.rf.done .tt{text-decoration:line-through;color:var(--mute)}
+.rf-send{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px}
+.hobanner{display:flex;gap:8px;align-items:center;background:var(--agent-bg);color:var(--agent-ink);border-radius:8px;padding:7px 10px;margin-bottom:10px;font-size:13.5px}
+.proposal{border:1px solid var(--agent);border-radius:8px;padding:8px 10px;margin-bottom:12px}
+.batch{border:1px dashed var(--line);border-radius:8px;padding:6px 8px;margin:6px 0}.batch.over{border-color:var(--acc);background:var(--sel)}
+.batch .chip{cursor:grab}.hohist{font-size:12.5px;margin:0 0 10px}
+#hoDlg .opt{display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--line);border-radius:8px;margin:6px 0;cursor:pointer}
+#hoDlg .opt:has(input:checked){border-color:var(--acc);background:var(--sel)}
 </style>
 </head>
 <body>
@@ -218,6 +232,7 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
   <div class="spacer"></div>
   <button class="pill agent" id="agentPill" hidden title="What Claude did last"></button>
   <button class="pill warn" id="sugPill" hidden title="Show the first suggestion"></button>
+  <button class="btn primary" id="sendBtn" hidden title="Hand the planned refactors to Claude">Send plan to Claude</button>
   <button class="btn" id="searchBtn" title="Find a component, type, task or action">⌕ Search <span class="kbd">⌘K</span></button>
   <div class="menu-wrap"><button class="btn" id="shareBtn">Share ▾</button><div class="menu" id="shareMenu" hidden></div></div>
   <div class="menu-wrap"><button class="btn ico" id="moreBtn" title="More">⋯</button><div class="menu" id="moreMenu" hidden></div></div>
@@ -229,7 +244,7 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
   <p>Plan an architecture change, then let an agent build it. The <b>as-is</b> model comes from the code. You edit the <b>to-be</b> model. The difference becomes a <b>plan</b>.</p>
   <h3>The screen</h3>
   <ul>
-    <li><b>Left: the plan.</b> The intent at the top says what the change should achieve. Below it come the rules, the tasks and the comment threads. A thread about a task sits under that task. The narrow column on the far left jumps to each part.</li>
+    <li><b>Left: the plan.</b> The intent at the top says what the change should achieve. Below it come the rules, the tasks and the comment threads. A thread about a task sits under that task.</li>
     <li><b>Right: the diagram.</b> The toolbar picks the view (<i>Components</i>, <i>Types</i>, <i>Sequences</i>, <i>Glossary</i>) and the mode (<i>As-is</i>, <i>To-be</i>, <i>Diff</i>). <i>Focus</i> narrows the diagram to a few components. <i>View</i> holds the settings that hide or filter things; its number says how many are on. <i>Overlay</i> colours the boxes.</li>
     <li><b>Item pages.</b> Click a box, a line or a call to open its page on the left. The page shows the details and the edits you can make. Click <i>Plan</i> in the breadcrumb, or press <kbd>Esc</kbd>, to go back.</li>
     <li><b>Header.</b> The pill shows what Claude did last. <i>Search</i> finds any component, type, task or action. <i>Share</i> copies or downloads the plan, the diagram as D2 and the target model. <i>⋯</i> opens files, exports from the code, resets the target, sets the theme and opens this help.</li>
@@ -240,7 +255,8 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
     <li><b>Say what you want.</b> Write the intent at the top of the plan.</li>
     <li><b>Edit the to-be model.</b> Click an item and change it on its page: move a type, rename it, forbid a dependency. Drag the blue dot from one box to another to connect them. Select a line and press <kbd>Delete</kbd> to remove it. To add a type or a package, or to read the model as text, open <i>Edit the model</i> at the end of the plan. <i>Diff</i> shows what you changed.</li>
     <li><b>Comment.</b> Write on an item's page. Shift-click several items to comment on them together, for example an import cycle. Type <kbd>@</kbd> to link a component, type or task. A comment on a selection keeps a small picture of it. Click the picture to get that view back.</li>
-    <li><b>Hand over.</b> The plan lists the tasks in order. Claude reads it directly. <i>Check against the code</i>, at the end of the plan, shows how the result is verified.</li>
+    <li><b>Lock in.</b> When a discussion has reached a decision, choose <i>Lock in</i> on its thread. Give the refactor a title and a short summary of what was agreed. It joins <i>Planned refactors</i>. Drag the cards to set the order. <i>Unlock</i> opens the discussion again.</li>
+    <li><b>Hand over.</b> When you are happy with all planned refactors, choose <i>Send plan to Claude</i>. Claude does them all in one go, or first proposes how to split or combine the work. You can move refactors between the proposed batches, then approve. A banner at the top of the plan shows the progress. The plan also lists the tasks from your model edits in order. Claude reads it directly. <i>Check against the code</i>, at the end of the plan, shows how the result is verified.</li>
   </ol>
   <h3>Working with Claude</h3>
   <p>In Claude Code, with the archplan plugin, type <code>/archplan</code> in the repository. Claude sees your comments as you write them and answers in the same thread. An orange <b>decision</b> thread waits for your choice: click an option. A <b>feedback</b> thread only needs reading.</p>
@@ -267,10 +283,10 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
   </table>
   <p class="mute">Everything is saved in <code>.archplan/</code> in the repository. Commit it to share the plan and the threads.</p>
 </div></div>
+<div id="hoDlg" hidden><div class="box"></div></div>
 <div id="palette" hidden><div class="box"><input id="palIn" placeholder="Find a component, type, task or action" autocomplete="off"><div id="palList"></div></div></div>
 <div id="ac" hidden></div>
 <main>
-  <nav id="outline"></nav>
   <aside id="doc"><div id="panel"></div></aside>
   <div id="split" title="Drag to resize; double-click to reset"></div>
   <section id="stage">
@@ -537,6 +553,7 @@ async function pollThreads() {
       if (d.target_rev > known.targetRev) { known.targetRev = d.target_rev; await reloadTarget(d.target_by); refreshPreviews(); }
       if (d.suggestions_version !== known.sugVer) { known.sugVer = d.suggestions_version; loadSuggestions(); }
       if (d.activity_etag !== known.actEtag) { known.actEtag = d.activity_etag; loadActivity(); }
+      if (d.handover_version !== known.hoVer) { known.hoVer = d.handover_version; loadHandover(); }
     } catch { await new Promise(r => setTimeout(r, 3000)); }
   }
 }
@@ -1262,6 +1279,12 @@ function planMD(P) {
   const lines = [`# Change plan: ${META.repo}`, '', `**Intent:** ${intent || "(not stated)"}`, '',
     `**Base:** ${q(META.repo + '@' + META.commit)} (as-is extraction). **Target:** ${q('arch/target.archmodel.json')}. **Tasks:** ${P.tasks.length}.`, ''];
   P.warnings.forEach(w => lines.push(`> ⚠ ${w}`, ''));
+  const PR = planned();
+  if (PR.length) {
+    lines.push('## Planned refactors', '');
+    PR.forEach((t, i) => lines.push(`${i + 1}. **${t.refactor?.title || t.label}**${t.refactor?.summary ? ': ' + t.refactor.summary.replace(/\s+/g, ' ') : ''} (thread ${t.id}, ${t.refactor?.state || 'planned'})`));
+    lines.push('');
+  }
   if (P.openQ.length) {
     lines.push('## Open questions', '');
     P.openQ.forEach(o => lines.push(`- **${o.target}**: ${o.text}${o.task ? ` (blocks ${o.task.id})` : ''}`));
@@ -1275,6 +1298,7 @@ function planMD(P) {
 function planJSON(P) {
   return JSON.stringify({
     version: 1, intent, base: {repo: META.repo, commit: META.commit}, target: '.archplan/target.archmodel.json', warnings: P.warnings,
+    planned_refactors: planned().map(t => ({thread: t.id, anchor: t.anchor, title: t.refactor?.title || t.label, summary: t.refactor?.summary || '', state: t.refactor?.state || 'planned'})),
     open_questions: P.openQ.map(o => ({thread: o.thread, anchor: o.anchor, target: o.target, text: o.text, blocks: o.task?.id || null})),
     tasks: P.tasks.map(t => ({id: t.id, key: t.key, title: t.title, why: t.why.join(' ') || null, depends_on: [...t.deps].map(d => P.tasks.find(x => x.key === d).id),
       files: t.files, steps: t.steps, blast_radius: t.blast, acceptance: t.acceptance, questions: t.questions})),
@@ -2354,20 +2378,22 @@ const opts = (list, v) => list.map(([k, l]) => `<option value="${esc(k)}"${k ===
 const compOpts = v => opts(Object.entries(toBe.components).map(([k, c]) => [k, c.name]), v);
 const typeOpts = v => opts(Object.entries(toBe.types).map(([k]) => [k, qname(toBe, k)]), v);
 const md = s => marked.parse(s || '');
-function threadHTML(t, withLink) {
+function threadHTML(t, withLink, inCard) {
   const w = whoNext(t), nd = needs(t), last = t.messages.length - 1;
   const tag = m => m.author !== 'agent' ? '' : m.kind === 'decision' ? '<span class="mk decision">decision needed</span>' : '<span class="mk">feedback</span>';
   const choices = (m, i) => i === last && nd === 'decision' && m.options?.length
     ? `<div class="choices">${m.options.map(o => `<button class="btn" data-act="thread.choose" data-id="${t.id}" data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : '';
   const msgs = t.messages.map((m, i) => `<div class="msg${m.kind === 'decision' ? ' decision' : ''}"><span class="who ${m.author === 'agent' ? 'agent' : 'human'}">${m.author === 'agent' ? 'Claude' : 'you'}</span>${tag(m)}<span class="when">${esc((m.at || '').replace('T', ' ').slice(0, 16))}</span><div class="body">${md(m.text)}</div>${choices(m, i)}</div>`).join('');
   return `<div class="thread ${t.status}${nd ? ' needs-' + nd : ''}" id="th-${esc(t.id)}"><div class="th-h">${withLink ? `<a data-act="thread.goto" data-key="${esc(t.anchor)}">${esc(t.label || t.anchor)}</a>` : ''}<div class="spacer"></div>
-      ${nd === 'decision' ? '<span class="wait human">decide</span>' : nd === 'feedback' ? '<span class="wait fb">read</span>' : w === 'agent' ? '<span class="wait agent">waiting on Claude</span>' : '<span class="wait">resolved</span>'}</div>
+      ${t.status === 'planned' ? `<span class="wait plan">${stack().includes(t) ? `planned refactor ${stack().indexOf(t) + 1}` : 'refactor done'}</span>` : nd === 'decision' ? '<span class="wait human">decide</span>' : nd === 'feedback' ? '<span class="wait fb">read</span>' : w === 'agent' ? '<span class="wait agent">waiting on Claude</span>' : '<span class="wait">resolved</span>'}</div>
     ${t.snapshot ? snapHTML(t) : ''}
     ${msgs}
     ${t.status === 'open' ? pending().filter(s => s.thread === t.id).map(sugCard).join('') : ''}
-    ${t.status === 'open' ? `<textarea id="r-${t.id}" rows="1" placeholder="Reply, or type @ to link a component, type or task"></textarea>
-    <div class="row"><button class="btn" data-act="thread.reply" data-id="${t.id}">Reply</button><button class="btn" data-act="thread.resolve" data-id="${t.id}">Resolve</button></div>`
-    : `<div class="row"><button class="btn" data-act="thread.reopen" data-id="${t.id}">Reopen</button></div>`}</div>`;
+    ${t.status === 'resolved' ? `<div class="row"><button class="btn" data-act="thread.reopen" data-id="${t.id}">Reopen</button></div>`
+    : `<textarea id="r-${t.id}" rows="1" placeholder="Reply, or type @ to link a component, type or task"></textarea>
+    ${lockFor === t.id ? lockForm(t) : `<div class="row"><button class="btn" data-act="thread.reply" data-id="${t.id}">Reply</button>${t.status === 'open'
+      ? `<button class="btn" data-act="thread.lock" data-id="${t.id}" title="Add this refactor to the planned stack">Lock in</button><button class="btn" data-act="thread.resolve" data-id="${t.id}">Resolve</button>`
+      : inCard || inHandover(t.id) ? '' : `<button class="btn" data-act="rf.unlock" data-id="${t.id}" title="Take it off the planned stack and open the discussion again">Unlock</button>`}</div>`}`}</div>`;
 }
 const composer = key => `<textarea id="c-new" rows="2" data-key="${esc(key)}" placeholder="Comment, question or instruction. Type @ to link a component, type or task. Open threads become open questions in the plan."></textarea>
   <div class="row"><button class="btn" data-act="thread.new" data-key="${esc(key)}">Comment</button><span class="mute" style="font-size:12px">⌘↵ sends</span></div>`;
@@ -2602,7 +2628,7 @@ const actions = {
   'thread.new': e => { const v = val('c-new'); if (!v) return; $('c-new').value = ''; acHide(); const k = e.dataset.key; if (k === composeKey) composeKey = null; addThread(k, v, 'human', snapshotFor(k)); },
   'thread.choose': e => replyThread(e.dataset.id, e.dataset.opt),
   'thread.reply': e => { const v = val('r-' + e.dataset.id); if (v) { $('r-' + e.dataset.id).value = ''; replyThread(e.dataset.id, v); } },
-  'thread.resolve': e => { const v = val('r-' + e.dataset.id); $('r-' + e.dataset.id).value = ''; replyThread(e.dataset.id, v, 'resolved'); },
+  'thread.resolve': e => { const v = val('r-' + e.dataset.id); if ($('r-' + e.dataset.id)) $('r-' + e.dataset.id).value = ''; replyThread(e.dataset.id, v, 'resolved'); },
   'thread.reopen': e => replyThread(e.dataset.id, '', 'open'),
   'thread.compose': e => {
     const k = e.dataset.key;
@@ -2742,6 +2768,213 @@ const actions = {
     render();
   },
 };
+// ---------- planned refactors and the handover ----------
+// A thread the human locks in becomes a planned refactor (status "planned").
+// The planned stack goes to Claude in one handover.
+let HO = {current: null, history: []}, lockFor = null, rfEdit = null, hoBatches = null, hoAsk = false, drag = null;
+const rfOpen = new Set(), drafts = {};
+const planned = () => threads.filter(t => t.status === 'planned').sort((a, b) => (a.refactor?.order ?? 0) - (b.refactor?.order ?? 0));
+// The stack: refactors still to do, plus the done ones of the active handover.
+// Done refactors of earlier handovers fold away below it.
+const todo = () => planned().filter(t => t.refactor?.state !== 'done');
+const stack = () => planned().filter(t => t.refactor?.state !== 'done' || inHandover(t.id));
+const openThreads = () => threads.filter(t => t.status === 'open');
+const hoActive = () => HO.current && !['done', 'cancelled'].includes(HO.current.status) ? HO.current : null;
+const inHandover = id => !!hoActive()?.refactors.includes(id);
+const rfOf = id => threads.find(t => t.id === id);
+const draft = (id, v) => drafts[id] ?? v;
+// The first sentence of a message (or more, up to 40 characters), as plain text.
+const firstSentence = s => {
+  const p = (s || '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[`*_>#]/g, '').replace(/\s+/g, ' ').trim();
+  let out = '';
+  for (const x of p.split(/(?<=[.!?])\s+/)) { out += (out ? ' ' : '') + x; if (out.length >= 40) break; }
+  return out.trim().slice(0, 240);
+};
+function lockForm(t) {
+  const ms = t.messages, agent = [...ms].reverse().find(m => m.author === 'agent');
+  const title = firstSentence(ms[0]?.text).replace(/[.!?]$/, '').slice(0, 90) || t.label || anchorLabel(t.anchor);
+  const sum = firstSentence((agent || ms[ms.length - 1])?.text);
+  return `<div class="lockform"><label>Title<input id="lk-t-${t.id}" value="${esc(draft('lk-t-' + t.id, title))}"></label>
+    <label>Summary: what was agreed<textarea id="lk-s-${t.id}" rows="3">${esc(draft('lk-s-' + t.id, sum))}</textarea></label>
+    <div class="row"><button class="btn primary" data-act="thread.lockok" data-id="${t.id}">Lock in</button><button class="btn" data-act="thread.lockcancel" data-id="${t.id}">Cancel</button></div></div>`;
+}
+const stBadge = st => `<span class="st ${st}">${{planned: 'planned', 'in-progress': 'in progress', done: 'done'}[st] || esc(st)}</span>`;
+const anchorKeys = a => a.startsWith('group:') ? groupMembers(a) : [a];
+function rfCard(t, i) {
+  const r = t.refactor || {}, st = r.state || 'planned', ed = rfEdit === t.id, busy = inHandover(t.id);
+  return `<div class="rf ${st}" id="rf-${esc(t.id)}" data-rf="${esc(t.id)}" draggable="${!busy && !ed}" title="${busy ? '' : 'Drag to change the order'}">
+    <div class="rf-h"><span class="rf-n">${i + 1}</span><span class="tt">${esc(r.title || t.label || '')}</span>${busy || st !== 'planned' ? stBadge(st) : ''}</div>
+    ${ed ? `<div class="lockform" style="margin-left:30px"><label>Title<input id="rfe-t-${t.id}" value="${esc(draft('rfe-t-' + t.id, r.title || ''))}"></label>
+      <label>Summary<textarea id="rfe-s-${t.id}" rows="3">${esc(draft('rfe-s-' + t.id, r.summary || ''))}</textarea></label>
+      <div class="row"><button class="btn primary" data-act="rf.save" data-id="${t.id}">Save</button><button class="btn" data-act="rf.cancel" data-id="${t.id}">Cancel</button></div></div>`
+      : r.summary ? `<div class="rf-sum">${md(r.summary)}</div>` : ''}
+    ${r.note ? `<div class="rf-note">Claude: ${esc(r.note)}</div>` : ''}
+    <div class="chips">${anchorKeys(t.anchor).map(k => `<button class="chip" data-act="thread.goto" data-key="${esc(k)}">${esc(anchorLabel(k))}</button>`).join('')}</div>
+    <div class="row"><button class="linkb" data-act="rf.thread" data-id="${t.id}">${rfOpen.has(t.id) ? 'Hide' : 'Show'} the conversation (${t.messages.length})</button><span class="spacer"></span>
+      ${busy || ed ? '' : `<button class="btn" data-act="rf.edit" data-id="${t.id}">Edit</button><button class="btn" data-act="rf.unlock" data-id="${t.id}" title="Take it off the planned stack and open the discussion again">Unlock</button>`}</div>
+    ${rfOpen.has(t.id) ? threadHTML(t, false, true) : ''}</div>`;
+}
+function plannedHTML() {
+  const ps = stack(), dn = planned().filter(t => !ps.includes(t));
+  const fin = dn.length ? fold('rfdone', `Done refactors (${dn.length})`, dn.map(t => `<div class="rf done"><div class="rf-h"><span class="tt">${esc(t.refactor?.title || t.label)}</span>${stBadge('done')}<button class="btn" data-act="thread.resolve" data-id="${t.id}" title="Move the thread to Done">Resolve</button></div>${t.refactor?.note ? `<div class="rf-note" style="margin-left:0">Claude: ${esc(t.refactor.note)}</div>` : ''}</div>`).join('')) : '';
+  if (!ps.length) return fin + '<p class="mute" style="margin:0">Nothing planned yet. When a discussion has reached a decision, choose <b>Lock in</b> on its thread. The refactor joins this stack.</p>';
+  return ps.map(rfCard).join('') + fin + (hoActive() || !todo().length ? '' : `<div class="rf-send"><span class="mute" style="font-size:13px">Drag the cards to change the order.</span><span class="spacer"></span><button class="btn primary" data-act="ho.open">Send plan to Claude</button></div>`);
+}
+const hhmm = at => { const d = new Date(at); return isNaN(d) ? '' : d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}); };
+const HO_ST = {sent: 'waiting for Claude', proposed: 'Claude proposes batches', approved: 'approved', 'in-progress': 'in progress'};
+function hoBannerHTML() {
+  const a = hoActive(), hist = [...(HO.history || []), ...(HO.current && !a ? [HO.current] : [])].filter((h, i, l) => l.findIndex(x => x.id === h.id) === i);
+  let s = '';
+  if (a) {
+    const n = a.refactors.length, done = a.refactors.filter(id => rfOf(id)?.refactor?.state === 'done').length;
+    s += `<div class="hobanner" id="hoBanner"><span class="dot live"></span><span>Sent to Claude ${hhmm(a.created)} · ${a.mode === 'all' ? 'all in one go' : 'split into batches'} · ${done} of ${n} done · ${HO_ST[a.status] || esc(a.status)}</span><span class="spacer"></span><button class="btn" data-act="ho.cancel">Cancel</button></div>`;
+    if (a.status === 'proposed') s += proposalHTML(a);
+  }
+  if (hist.length) s += `<p class="mute hohist">Earlier handovers: ${hist.slice(-3).reverse().map(h => `${esc(new Date(h.created).toLocaleDateString())} ${hhmm(h.created)}, ${esc(h.status)}, ${plural(h.refactors.length, 'refactor')}`).join('; ')}.</p>`;
+  return s;
+}
+const hoB = a => hoBatches?.id === a.id ? hoBatches.b : a.batches || [];
+function proposalHTML(a) {
+  const B = hoB(a), num = id => stack().findIndex(t => t.id === id) + 1;
+  return `<div class="proposal" id="hoProposal"><div class="mh" style="padding-left:0">Claude proposes ${B.length} batch${B.length === 1 ? '' : 'es'}</div>
+    ${B.map((b, i) => `<div class="batch" data-batch="${i}"><b>${i + 1}. ${esc(b.title || 'Batch ' + (i + 1))}</b>${b.notes ? `<div class="mute" style="font-size:13px">${esc(b.notes)}</div>` : ''}
+      <div class="chips">${b.refactors.map(id => `<span class="chip" draggable="true" data-bref="${esc(id)}">${num(id) || '?'}. ${esc(rfOf(id)?.refactor?.title || id)}</span>`).join('') || '<span class="mute" style="font-size:13px">Empty. Drop a refactor here.</span>'}</div></div>`).join('')}
+    <p class="mute" style="font-size:13px;margin:4px 0">Drag a refactor to another batch to move it. Approve sends the batches as shown.</p>
+    ${hoAsk ? `<textarea id="ho-ask" rows="2" placeholder="What should Claude change in the proposal?"></textarea><div class="row"><button class="btn primary" data-act="ho.asksend">Send to Claude</button><button class="btn" data-act="ho.askcancel">Cancel</button></div>`
+      : `<div class="row"><button class="btn primary" data-act="ho.approve">Approve</button><button class="btn" data-act="ho.ask">Ask for changes</button></div>`}</div>`;
+}
+// Server calls; without a server (sample, local file) the same changes are made in the page.
+async function hoCall(method, path, body, local) {
+  if (!collab) { local(); return onThreads(true); }
+  try { await api(method, path, body); }
+  catch (err) {
+    if (/: 409$/.test(err.message)) toast(path.includes('unlock') ? 'This refactor is part of the handover. Cancel the handover first.' : path === '/api/handover' ? 'A handover is already active.' : 'That is not possible now.');
+    else toast(`Could not save: ${err.message}`);
+  }
+  await syncThreads(); if (path.includes('handover')) await loadHandover();
+}
+const lockThread = (id, title, summary) => hoCall('POST', `/api/threads/${id}/lock`, {title, summary}, () => {
+  const t = rfOf(id), order = planned().length;
+  Object.assign(t, {status: 'planned', updated: nowStamp(), refactor: {title, summary, locked: nowStamp(), order, state: 'planned', note: ''}});
+});
+const unlockThread = id => hoCall('POST', `/api/threads/${id}/unlock`, undefined, () => { const t = rfOf(id); t.status = 'open'; delete t.refactor; });
+const editRefactor = (id, title, summary) => hoCall('PUT', `/api/threads/${id}/refactor`, {title, summary}, () => Object.assign(rfOf(id).refactor, {title, summary}));
+function reorderRefactors(ids) {
+  ids.forEach((id, i) => { const t = rfOf(id); if (t?.refactor) t.refactor.order = i; });
+  if (collab) renderSide();
+  return hoCall('PUT', '/api/refactors/order', {ids}, () => {});
+}
+async function loadHandover() {
+  if (!collab) return;
+  try { HO = await api('GET', '/api/handover'); } catch { return; }
+  if (hoBatches && hoBatches.id !== HO.current?.id) hoBatches = null;
+  renderSide();
+}
+function sendPlan(mode, note) {
+  return hoCall('POST', '/api/handover', {mode, note}, () => {
+    const ids = todo().map(t => t.id), at = nowStamp();
+    // Without Claude, propose one batch per two refactors so the flow can be tried.
+    const batches = mode === 'batches' ? [...Array(Math.ceil(ids.length / 2))].map((_, i) => ({title: `Batch ${i + 1}`, refactors: ids.slice(2 * i, 2 * i + 2), notes: ''})) : [];
+    HO.current = {id: 'ho-' + Math.random().toString(36).slice(2, 8), created: at, mode, note, refactors: ids, status: mode === 'all' ? 'sent' : 'proposed', batches, decided: null};
+  });
+}
+const approveHandover = batches => hoCall('POST', `/api/handover/${HO.current.id}/approve`, batches ? {batches} : {}, () => {
+  Object.assign(HO.current, {status: 'approved', decided: nowStamp(), ...(batches ? {batches} : {})});
+});
+const cancelHandover = () => hoCall('POST', `/api/handover/${HO.current.id}/cancel`, undefined, () => {
+  HO.current.status = 'cancelled'; HO.history.push(HO.current); HO.current = null;
+  for (const t of planned()) if (t.refactor.state === 'in-progress') t.refactor.state = 'planned';
+});
+function hoDialog() {
+  const ps = todo(), nOpen = openThreads().length;
+  if (!ps.length) return;
+  $('hoDlg').firstElementChild.innerHTML = `<button class="btn close" data-ho="close" title="Close (Esc)">✕</button><h2>Send plan to Claude</h2>
+    <p>Claude gets ${plural(ps.length, 'planned refactor')}, in this order:</p><ol>${ps.map(t => `<li>${esc(t.refactor?.title || t.label)}</li>`).join('')}</ol>
+    ${nOpen ? `<div class="warnbox">⚠ ${nOpen === 1 ? '1 discussion is' : nOpen + ' discussions are'} still open. You can send the plan anyway.</div>` : ''}
+    <h3>How should Claude do this?</h3>
+    <label class="opt"><input type="radio" name="homode" value="all" checked><span><b>All in one go, in this order</b><br><span class="mute">Claude works through the refactors from top to bottom.</span></span></label>
+    <label class="opt"><input type="radio" name="homode" value="batches"><span><b>Propose how to split or combine the work first</b><br><span class="mute">Claude proposes batches. You approve them before the work starts.</span></span></label>
+    <textarea id="hoNote" rows="2" placeholder="Note for Claude (optional)" style="margin-top:6px"></textarea>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" data-ho="close">Cancel</button><button class="btn primary" data-ho="send">${nOpen ? 'Send anyway' : 'Send'}</button></div>`;
+  $('hoDlg').hidden = false;
+  $('hoDlg').querySelector('input[name=homode]').focus();
+}
+$('hoDlg').addEventListener('click', async e => {
+  const b = e.target.closest('[data-ho]');
+  if (e.target === $('hoDlg') || b?.dataset.ho === 'close') { $('hoDlg').hidden = true; return; }
+  if (b?.dataset.ho !== 'send') return;
+  const mode = $('hoDlg').querySelector('input[name=homode]:checked').value, note = $('hoNote').value.trim();
+  $('hoDlg').hidden = true;
+  await sendPlan(mode, note);
+  toPlan(); $('panel').scrollTop = 0;
+});
+$('hoDlg').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); $('hoDlg').hidden = true; } });
+$('sendBtn').addEventListener('click', hoDialog);
+// Keep what the user types in the lock-in and edit forms across live updates.
+$('panel').addEventListener('input', e => { if (/^(lk|rfe)-/.test(e.target.id)) drafts[e.target.id] = e.target.value; });
+const clearDrafts = pre => Object.keys(drafts).filter(k => k.startsWith(pre)).forEach(k => delete drafts[k]);
+// Drag cards to reorder the stack; drag chips between the batches of a proposal.
+$('panel').addEventListener('dragstart', e => {
+  const c = e.target.closest?.('[data-rf],[data-bref]'); if (!c) return;
+  drag = c.dataset.rf ? {kind: 'rf', id: c.dataset.rf} : {kind: 'b', id: c.dataset.bref};
+  e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', drag.id);
+  c.classList.add('dragging');
+});
+const dropMarks = () => $('panel').querySelectorAll('.drop-before,.drop-after,.over').forEach(x => x.classList.remove('drop-before', 'drop-after', 'over'));
+$('panel').addEventListener('dragover', e => {
+  if (!drag) return;
+  const tgt = drag.kind === 'rf' ? e.target.closest('[data-rf]') : e.target.closest('[data-batch]');
+  if (!tgt) return;
+  e.preventDefault(); dropMarks();
+  if (drag.kind === 'b') return tgt.classList.add('over');
+  if (tgt.dataset.rf === drag.id) return;
+  const r = tgt.getBoundingClientRect();
+  tgt.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
+});
+$('panel').addEventListener('drop', e => {
+  if (!drag) return;
+  e.preventDefault();
+  const d = drag; drag = null; dropMarks();
+  if (d.kind === 'rf') {
+    const tgt = e.target.closest('[data-rf]'); if (!tgt || tgt.dataset.rf === d.id) return renderSide();
+    const r = tgt.getBoundingClientRect(), ids = stack().map(t => t.id).filter(id => id !== d.id);
+    ids.splice(ids.indexOf(tgt.dataset.rf) + (e.clientY < r.top + r.height / 2 ? 0 : 1), 0, d.id);
+    return reorderRefactors(ids);
+  }
+  const box = e.target.closest('[data-batch]'), a = hoActive(); if (!box || !a) return;
+  const B = clone(hoB(a));
+  B.forEach(b => b.refactors = b.refactors.filter(id => id !== d.id));
+  B[+box.dataset.batch].refactors.push(d.id);
+  hoBatches = {id: a.id, b: B}; renderSide();
+});
+$('panel').addEventListener('dragend', () => { drag = null; dropMarks(); $('panel').querySelectorAll('.dragging').forEach(x => x.classList.remove('dragging')); });
+Object.assign(actions, {
+  'sec.go': e => gotoSec(e.dataset.sec),
+  'thread.lock': e => { lockFor = e.dataset.id; clearDrafts('lk-'); renderSide(); $('lk-t-' + lockFor)?.focus(); },
+  'thread.lockcancel': () => { lockFor = null; clearDrafts('lk-'); renderSide(); },
+  'thread.lockok': async e => {
+    const id = e.dataset.id, title = val('lk-t-' + id), summary = val('lk-s-' + id);
+    if (!title) return $('lk-t-' + id).focus();
+    lockFor = null; clearDrafts('lk-');
+    await lockThread(id, title, summary);
+    toPlan(); gotoSec('planned'); flash($('rf-' + id));
+  },
+  'rf.unlock': e => { if (rfEdit === e.dataset.id) rfEdit = null; unlockThread(e.dataset.id); },
+  'rf.edit': e => { rfEdit = e.dataset.id; clearDrafts('rfe-'); renderSide(); $('rfe-t-' + rfEdit)?.focus(); },
+  'rf.cancel': () => { rfEdit = null; clearDrafts('rfe-'); renderSide(); },
+  'rf.save': e => { const id = e.dataset.id, title = val('rfe-t-' + id); if (!title) return; rfEdit = null; const summary = val('rfe-s-' + id); clearDrafts('rfe-'); editRefactor(id, title, summary); },
+  'rf.thread': e => { const id = e.dataset.id; rfOpen.has(id) ? rfOpen.delete(id) : rfOpen.add(id); renderSide(); },
+  'ho.open': hoDialog,
+  'ho.cancel': () => { if (confirm('Cancel the handover? The refactors stay planned.')) cancelHandover(); },
+  'ho.approve': () => { const a = hoActive(), B = hoBatches?.id === a.id ? hoBatches.b.filter(b => b.refactors.length) : null; hoBatches = null; approveHandover(B); },
+  'ho.ask': () => { hoAsk = true; renderSide(); $('ho-ask')?.focus(); },
+  'ho.askcancel': () => { hoAsk = false; renderSide(); },
+  'ho.asksend': async () => {
+    const v = val('ho-ask'), id = hoActive()?.refactors[0]; if (!v || !id) return;
+    hoAsk = false; await replyThread(id, `About the batch proposal: ${v}`);
+    toast('Sent to Claude in the thread of refactor 1.');
+  },
+});
 $('panel').addEventListener('click', e => {
   const mn = e.target.closest('.mention'); if (mn) { e.preventDefault(); return gotoMention(mn.dataset.anchor); }
   const sn = e.target.closest('.snap'); if (sn && !e.target.closest('[data-act]')) return actions['snap.open'](sn);
@@ -2890,23 +3123,26 @@ function planDoc() {
   const vio = r => viol.filter(e => ruleHits(r, e.from, e.to));
   const pol = toBe.policy, E = pol.enforcer, nAllow = pol.rules.filter(r => r.effect === 'allow').length;
   const sec = (id, title, body) => `<div class="dsec" id="sec-${id}"><h4>${title}</h4>${body}</div>`;
-  const decT = loose.filter(t => needs(t) === 'decision'), qT = loose.filter(t => needs(t) !== 'decision'), done = threads.filter(t => t.status !== 'open');
+  const decT = loose.filter(t => needs(t) === 'decision'), qT = loose.filter(t => needs(t) !== 'decision'), done = threads.filter(t => t.status === 'resolved');
+  const nPlan = todo().length, nOpen = openThreads().length;
   const st = collab ? `<div class="collab"><b class="on">● shared</b> with Claude through <code>archplan mcp</code> in <code>${esc(collab.root)}</code></div>`
     : `<div class="collab">● local only. Run <code>archplan up</code> in a repository to share threads with Claude.</div>`;
-  return `${composeLoose ? `<div class="callout" id="composeBox"><b>New comment on ${esc(anchorLabel(composeKey))}</b> <button class="x" data-act="compose.close" title="Close">×</button>${threadsOn(composeKey).map(t => threadHTML(t)).join('')}${composer(composeKey)}</div>` : ''}
+  return `${hoBannerHTML()}${composeLoose ? `<div class="callout" id="composeBox"><b>New comment on ${esc(anchorLabel(composeKey))}</b> <button class="x" data-act="compose.close" title="Close">×</button>${threadsOn(composeKey).map(t => threadHTML(t)).join('')}${composer(composeKey)}</div>` : ''}
     <div class="dsec" id="sec-intent" style="margin-top:0"><div class="doc-title${title ? '' : ' empty'}" id="docTitle">${esc(title || 'What should this change achieve?')}</div>
     <textarea id="i-intent" rows="3" placeholder="Write the intent: what should this change achieve? Claude reads this first.">${esc(intent)}</textarea>
-    <div class="pills">${viol.length ? `<span class="pill rem">${plural(viol.length, 'rule')} violated</span>` : `<span class="pill">no rule violated</span>`}<span class="pill">${plural(P.tasks.length, 'task')}</span>${dec ? `<span class="pill warn">${plural(dec, 'decision')}</span>` : ''}${pending().length ? `<span class="pill add">${plural(pending().length, 'suggestion')}</span>` : ''}</div>${st}</div>
+    <div class="pills"><button class="pill acc" data-act="sec.go" data-sec="${nOpen || !nPlan ? 'open' : 'planned'}">${nPlan} planned · ${nOpen} open</button>${viol.length ? `<span class="pill rem">${plural(viol.length, 'rule')} violated</span>` : `<span class="pill">no rule violated</span>`}<span class="pill">${plural(P.tasks.length, 'task')}</span>${dec ? `<span class="pill warn">${plural(dec, 'decision')}</span>` : ''}${pending().length ? `<span class="pill add">${plural(pending().length, 'suggestion')}</span>` : ''}</div>${st}</div>
     ${loneSug.map(sugCard).join('')}
     ${P.warnings.map(w => `<div class="warnbox">⚠ ${esc(w)}</div>`).join('')}
     ${sec('rules', 'Rules', `${rules.map(([r, i]) => { const v = vio(r); return `<div class="rule-row${v.length ? ' bad' : ''}"><span>${esc(ruleText(toBe, r))}</span><span class="n">${v.length ? `${plural(v.reduce((n, e) => n + (e.weight || e.via.length || 1), 0), 'site')}` : ''}</span>${mode === 'asis' ? '' : `<button class="x" data-act="rule.del" data-i="${i}" title="Drop this rule">×</button>`}</div>`; }).join('')
       || '<p class="mute" style="margin:0">No rules yet. Select a dependency line and forbid it.</p>'}
       <p class="mute" style="font-size:13px;margin:6px 0 0">Default <b>${pol.default}</b>${pol.default === 'deny' ? `: only the ${nAllow} allow rules permit a dependency` : ''}.${E ? ` Enforced by <code>${esc(E.tool)}</code> (${esc(E.config)}).` : ''}</p>`)}
-    ${sec('tasks', 'Tasks', anyChange ? P.tasks.map(t => taskCard(t, P, per[t.key] || [])).join('') : `<p class="mute" style="margin:0">No changes yet, so no tasks. Edit the diagram${BASE === SAMPLE ? ', or choose <b>Apply demo edits</b> in the ⋯ menu' : ''}.</p>`)}
-    ${sec('decisions', 'Decisions', decT.map(t => threadHTML(t, true)).join('') || '<p class="mute" style="margin:0">Nothing waits for your choice.</p>')}
-    ${sec('questions', 'Questions', qT.map(t => threadHTML(t, true)).join('') || '<p class="mute" style="margin:0">No open threads outside the tasks. Comment on an item from its page.</p>')}
+    ${sec('open', `Open discussions${nOpen ? ` (${nOpen})` : ''}`, [...decT, ...qT].map(t => threadHTML(t, true)).join('')
+      + (loose.length < nOpen ? `<p class="mute" style="font-size:13px;margin:6px 0 0">${plural(nOpen - loose.length, 'more discussion')} sit${nOpen - loose.length === 1 ? 's' : ''} under the changes below.</p>` : '')
+      || '<p class="mute" style="margin:0">No open discussions. Comment on an item from its page.</p>')}
+    ${sec('planned', `Planned refactors${nPlan ? ` (${nPlan})` : ''}`, plannedHTML())}
+    ${sec('tasks', 'Changes to the model', anyChange ? P.tasks.map(t => taskCard(t, P, per[t.key] || [])).join('') : `<p class="mute" style="margin:0">No changes yet, so no tasks. Edit the diagram${BASE === SAMPLE ? ', or choose <b>Apply demo edits</b> in the ⋯ menu' : ''}.</p>`)}
     ${fold('done', `Done (${done.length})`, done.map(t => threadHTML(t, true)).join('') || '<p class="mute">No resolved threads.</p>')}
-    ${fold('changes', `Changes (${D.items.length})`, changesHTML())}
+    ${fold('changes', `All differences (${D.items.length})`, changesHTML())}
     ${fold('check', 'Check against the code', verifyHTML())}
     ${fold('text', 'Plan as text', planText(P))}
     <div class="dsec" id="sec-edit"><h4>Edit the model</h4><ul class="plain"><li><button class="linkb" data-act="page.model">Types, packages, policy and the model as text</button></li>${Object.keys(toBe.sequences).length ? '<li><button class="linkb" data-act="page.seq">Sequences: add calls and participants</button></li>' : ''}<li><button class="linkb" data-act="page.glossary">Glossary: concepts and terms</button></li></ul></div>`;
@@ -2917,19 +3153,6 @@ function planText(P) {
   return `<div class="row"><div class="seg">${f('md')}${f('json')}</div><div class="spacer"></div><button class="btn" data-act="plan.copy">Copy</button><button class="btn" data-act="plan.download">Download</button></div>
     ${openSecs.has('text') ? `<pre class="raw mono">${esc(planFmtRaw === 'json' ? planJSON(P) : planMD(P))}</pre>` : ''}`;
 }
-function outlineHTML() {
-  const P = buildPlan(asIs, toBe, D), {loose} = threadPlaces(P), viol = violations(toBe).length;
-  const it = (id, label, n, cls) => `<div class="ol" data-sec="${id}">${label}<span class="n ${cls || ''}">${n ?? ''}</span></div>`;
-  return `<div class="mh">Contents</div>${it('intent', 'Intent')}${it('rules', 'Rules', viol ? viol : deniedRules(toBe).length, viol ? 'warn' : '')}${it('tasks', 'Tasks', P.tasks.length)}
-    ${it('decisions', 'Decisions', loose.filter(t => needs(t) === 'decision').length, 'warn')}${it('questions', 'Questions', loose.filter(t => needs(t) !== 'decision').length)}${it('done', 'Done', threads.filter(t => t.status !== 'open').length)}
-    ${it('changes', 'Changes', D.items.length)}${it('check', 'Check')}${it('edit', 'Edit the model')}
-    ${pending().length ? `<div class="mh" style="margin-top:12px">Review</div>${pending().map((s, i) => `<div class="ol" data-sug="${esc(s.id)}">Suggestion ${i + 1}<span class="n">${(s.ops || []).length}</span></div>`).join('')}` : ''}`;
-}
-$('outline').addEventListener('click', e => {
-  const o = e.target.closest('[data-sec],[data-sug]'); if (!o) return;
-  if (o.dataset.sug) return gotoSug(o.dataset.sug);
-  gotoSec(o.dataset.sec);
-});
 function toPlan() { if (sel || multi.length || page !== 'plan') { sel = null; multi = []; page = 'plan'; if (view === 'seq') renderSeq(); else applySel(); renderSide(); } }
 function gotoSec(id) {
   toPlan();
@@ -2958,7 +3181,6 @@ function renderSide() {
   $('panel').dataset.page = cur;
   if (cur === was) $('panel').scrollTop = top; else $('panel').scrollTop = 0;
   for (const [id, v, foc, pos] of keep) { const x = $(id); if (!x || (x.value && x.value !== v)) continue; x.value = v; if (foc) { x.focus(); try { x.setSelectionRange(pos, pos); } catch {} } }
-  $('outline').innerHTML = outlineHTML();
   renderHeader();
 }
 
@@ -3446,7 +3668,7 @@ function renderAgent() {
 $('agentPill').addEventListener('click', () => {
   const d = ACT.d || {};
   if (d.task) { const t = curPlan().tasks.find(x => x.key === d.task || x.id === d.task); if (t) return showTask(t.key); }
-  if (d.thread) { const t = threads.find(x => x.id === d.thread); if (t) { if (t.status !== 'open') openSecs.add('done'); toPlan(); renderSide(); return flash($('th-' + t.id)); } }
+  if (d.thread) { const t = threads.find(x => x.id === d.thread); if (t) { if (t.status === 'resolved') openSecs.add('done'); if (t.status === 'planned') rfOpen.add(t.id); toPlan(); renderSide(); return flash($('th-' + t.id)); } }
 });
 setInterval(renderAgent, 30000);
 
@@ -3613,7 +3835,7 @@ function palUpdate() {
   it('view', hideLeaves ? 'Show leaves' : 'Hide leaves', () => setLeaves(!hideLeaves));
   it('view', showExternal ? 'Hide external libraries' : 'Show external libraries', () => { showExternal = !showExternal; positions.components = {}; render(true); });
   OVERLAYS.forEach(([o, l]) => it('overlay', 'Overlay: ' + l, () => setOverlay(o)));
-  [['intent', 'Intent'], ['rules', 'Rules'], ['tasks', 'Tasks'], ['decisions', 'Decisions'], ['questions', 'Questions'], ['done', 'Done'], ['changes', 'Changes'], ['check', 'Check against the code']].forEach(([s, l]) => it('plan', l, () => gotoSec(s)));
+  [['intent', 'Intent'], ['rules', 'Rules'], ['open', 'Open discussions'], ['planned', 'Planned refactors'], ['tasks', 'Changes to the model'], ['done', 'Done'], ['changes', 'All differences'], ['check', 'Check against the code']].forEach(([s, l]) => it('plan', l, () => gotoSec(s)));
   it('action', 'Re-layout', () => $('layoutBtn').click()); it('action', 'Fit the diagram', () => $('fitBtn').click()); it('action', 'Undo', () => $('undoBtn').click());
   for (const x of [...shareItems(), ...moreItems()]) if (x.label && !x.off) it('action', x.label, x.run);
   for (const t of curPlan().tasks) it('task', `${t.id} ${t.title}`, () => showTask(t.key));
@@ -3647,6 +3869,7 @@ function renderHeader() {
   $('repo').title = `The as-is model was exported at ${META.repo}@${META.commit}.`;
   const n = pending().length;
   $('sugPill').hidden = !n;
+  $('sendBtn').hidden = !todo().length || !!hoActive();
   $('sugPill').innerHTML = `<span class="dot warn"></span>${plural(n, 'suggestion')} to review`;
   $('suggMode').hidden = !n;
   if (mode === 'sugg' && !n) mode = 'diff';
@@ -3724,8 +3947,8 @@ window.addEventListener('load', () => requestAnimationFrame(async () => {
     $('proj').textContent = collab.name;
     known.modelEtag = collab.model_etag;
     const d = await api('GET', '/api/threads?since=-1'); threadsVer = d.version; threads = d.threads; pollKey = d.key;
-    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag;
-    loadActivity(); loadSuggestions(); loadHotspots();
+    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag; known.hoVer = d.handover_version;
+    loadActivity(); loadSuggestions(); loadHotspots(); loadHandover();
     $('hint').style.display = 'none';
   } else { $('proj').textContent = qs.has('sample') ? 'sample' : 'local file'; loadHotspots(); }
   const url = qs.has('sample') ? null : qs.get('model') || collab?.model;
