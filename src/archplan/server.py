@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from . import handover, hotspots
+from .architecture import Architecture, ArchitectureError
 from .project import Project, ProjectError, UntrustedExport, etag, read_json, write_atomic, write_json
 from .handover import Handovers
 from .store import Conflict, NotFound, Store, wait
@@ -31,9 +32,9 @@ def changes(p: Project, store: Store) -> dict:
     c = {"version": store.version(), "model_etag": etag(p.model_path),
          "target_rev": st.get("target_rev", 0), "target_by": st.get("target_by"),
          "suggestions_version": Suggestions(p.dir).version(), "handover_version": Handovers(p.dir).version(),
-         "activity_etag": etag(p.path("activity.json"))}
+         "architecture_etag": etag(p.path("architecture.json")), "activity_etag": etag(p.path("activity.json"))}
     c["key"] = ".".join(str(c[k]) for k in ("version", "model_etag", "target_rev", "suggestions_version",
-                                            "handover_version", "activity_etag"))
+                                            "handover_version", "architecture_etag", "activity_etag"))
     return c
 
 
@@ -42,6 +43,8 @@ def make_handler(p: Project, store: Store):
     hotspot_lock = threading.Lock()
     suggestions = Suggestions(p.dir)
     handovers = Handovers(p.dir)
+    arch = Architecture(p)
+    arch_lock = threading.Lock()
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
@@ -132,6 +135,12 @@ def make_handler(p: Project, store: Store):
             if path == "/api/handover":
                 return self.send_json({"current": handovers.current(), "history": handovers.history(10),
                                        **changes(p, store)})
+            if path == "/api/architecture":
+                try:
+                    with arch_lock:
+                        return self.send_json({**arch.state(), **changes(p, store)})
+                except ArchitectureError as e:
+                    return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
             if path == "/api/suggestions":
                 return self.send_json({"suggestions": suggestions.newest(), **changes(p, store)})
             parts = path.strip("/").split("/")
@@ -187,6 +196,13 @@ def make_handler(p: Project, store: Store):
                     return self.send_json(handover.lock(store, parts[2], b.get("title", ""), b.get("summary", "")))
                 if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "unlock":
                     return self.send_json(handover.unlock(store, handovers, parts[2]))
+                if parts == ["api", "architecture", "lock"]:
+                    with arch_lock:
+                        return self.send_json({"profile": arch.lock(), **changes(p, store)})
+                if parts == ["api", "architecture", "infer"]:
+                    with arch_lock:
+                        proposal, saved = arch.infer()
+                    return self.send_json({"proposal": proposal, "saved": saved, **changes(p, store)})
                 if parts == ["api", "handover"]:
                     return self.send_json(handovers.create(store, b.get("mode", "all"), b.get("note", "")))
                 if len(parts) == 4 and parts[:2] == ["api", "handover"] and parts[3] == "approve":
@@ -202,6 +218,8 @@ def make_handler(p: Project, store: Store):
                         export_lock.release()
             except UntrustedExport as e:
                 return self.send_json({"error": str(e)}, HTTPStatus.FORBIDDEN)
+            except ArchitectureError as e:
+                return self.send_json({"error": str(e)}, HTTPStatus.CONFLICT)
             except NotFound as e:
                 return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
             except Conflict as e:
@@ -229,6 +247,9 @@ def make_handler(p: Project, store: Store):
                     return self.send_json({"ok": True})
                 if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "refactor":
                     return self.send_json(handover.edit(store, parts[2], b.get("title"), b.get("summary")))
+                if parts == ["api", "architecture"]:
+                    with arch_lock:
+                        return self.send_json({"profile": arch.save(b["profile"]), **changes(p, store)})
                 if parts == ["api", "refactors", "order"]:
                     return self.send_json({"refactors": handover.reorder(store, b.get("ids")), **changes(p, store)})
             except NotFound as e:

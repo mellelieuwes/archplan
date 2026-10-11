@@ -181,8 +181,10 @@ class ServerTest(TempProject):
             req = urllib.request.Request(url + path, method=method, headers=headers or {},
                                          data=json.dumps(body).encode() if body is not None else None)
             try:
-                return urllib.request.urlopen(req, timeout=5).status
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    return r.status
             except urllib.error.HTTPError as e:
+                e.close()
                 return e.code
         try:
             self.assertEqual(code("/api/info"), 200)
@@ -193,6 +195,7 @@ class ServerTest(TempProject):
             self.assertFalse((self.root / "owned.txt").exists())
         finally:
             srv.shutdown()
+            srv.server_close()
 
 
 class StoreTest(unittest.TestCase):
@@ -599,6 +602,156 @@ class RefactorTest(TempProject):
         self.assertEqual([t["id"] for t in ag.list_threads(waiting_on="agent")], [c])
         # a new handover takes only the refactors that are not done
         self.assertEqual(call(self.url, "/api/handover", "POST", {"mode": "all"})[1]["refactors"], [b])
+
+
+def synthetic_model(n=6, skip_builder=(), extra=()):
+    """A model with n systems, each with a public API, queries, a view with a
+    builder and a model; file refs follow the convention unless told otherwise."""
+    files = {}
+    for i in range(n):
+        d, t = f"core/systems/s{i}", f"thing{i}"
+        files[f"{d}/_public.ex"] = {"component": f"S{i}", "refs": [{"to": f"{d}/_queries.ex", "line": 3}]}
+        files[f"{d}/_queries.ex"] = {"component": f"S{i}", "refs": [{"to": f"{d}/{t}_model.ex", "line": 4}]}
+        files[f"{d}/{t}_model.ex"] = {"component": f"S{i}", "refs": []}
+        files[f"{d}/{t}_view.ex"] = {"component": f"S{i}", "refs": [{"to": f"{d}/{t}_view_builder.ex", "line": 5}]}
+        if i not in skip_builder:
+            files[f"{d}/{t}_view_builder.ex"] = {"component": f"S{i}", "refs": [{"to": f"{d}/_public.ex", "line": 6}]}
+        files[f"{d}/h{i}.ex"] = {"component": f"S{i}", "refs": []}
+        if i:  # each system calls the previous one's public API, several times over
+            files[f"{d}/_public.ex"]["refs"] += [{"to": f"core/systems/s{i - 1}/_public.ex", "line": 9}]
+            for k in range(4):
+                files[f"{d}/x{i}{k}.ex"] = {"component": f"S{i}", "refs": [{"to": f"core/systems/s{i - 1}/_public.ex"}]}
+    files["core/web/page.ex"] = {"component": "Web", "refs": []}
+    for src, dst in extra:
+        files[src]["refs"].append({"to": dst, "line": 1})
+    comps = {f"S{i}": {"path": f"core/systems/s{i}", "match": [f"core/systems/s{i}/**"], "layer": "systems"}
+             for i in range(n)}
+    comps["Web"] = {"path": "core/web", "match": ["core/web/**"], "layer": "web"}
+    return {"format": "archmodel/1", "components": comps, "dependencies": [], "types": {}, "files": files,
+            "layers": [{"id": "web", "name": "Web"}, {"id": "systems", "name": "Systems"}]}
+
+
+class ArchitectureTest(unittest.TestCase):
+    def test_globs(self):
+        from archplan.architecture import glob_match, role_match
+        self.assertTrue(glob_match("core/systems/lab", "core/systems/*"))
+        self.assertFalse(glob_match("core/systems/lab/x", "core/systems/*"))
+        self.assertTrue(glob_match("src/a/b/app", "src/**"))
+        self.assertTrue(role_match("models/zaak.py", "models/**"))
+        self.assertTrue(role_match("sub/day_view.ex", "*_view.ex"))
+        self.assertFalse(role_match("day_view_builder.ex", "*_view.ex"))
+
+    def test_infer_and_breaks(self):
+        from archplan import architecture as A
+        m = synthetic_model(skip_builder=(2,), extra=[("core/systems/s3/thing3_view.ex", "core/systems/s3/_queries.ex"),
+                                                      ("core/web/page.ex", "core/systems/s1/_queries.ex")])
+        p = A.infer(m)
+        self.assertEqual(p["source"], "inferred")
+        self.assertEqual(p["units"], [{"kind": "System", "glob": "core/systems/*"}])
+        roles = {r["id"]: r["patterns"] for r in p["roles"]}
+        self.assertEqual(roles, {"public": ["_public.ex"], "queries": ["_queries.ex"], "model": ["*_model.ex"],
+                                 "view": ["*_view.ex"], "view_builder": ["*_view_builder.ex"]})
+        rules = {r["id"]: r for r in p["rules"]}
+        self.assertEqual(rules["other-units-call-public"]["to"], "public")
+        self.assertEqual(rules["view-has-view_builder"]["match"], ["<stem>_view.ex -> <stem>_view_builder.ex"])
+        self.assertEqual([x["name"] for x in p["layers"]], ["Web", "Systems"])
+        a = A.analyse(p, m)
+        self.assertEqual(len(a["units"]), 6)
+        self.assertEqual(a["roles"][0], {"id": a["roles"][0]["id"], "present": 6, "of": 6})
+        self.assertEqual(a["unmatched"], 6 + 5 * 4)  # h<i>.ex everywhere, x*.ex in five
+        res = {r["id"]: r for r in a["rules"]}
+        pair = res["view-has-view_builder"]
+        self.assertEqual((pair["count"], pair["breaks"][0]["to"]), (1, "core/systems/s2/thing2_view_builder.ex"))
+        calls = res["other-units-call-public"]
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(calls["breaks"][0]["from"], "core/web/page.ex")  # code outside units counts as another unit
+        self.assertEqual(a["layers"]["unassigned"], [])
+        s3 = next(u for u in a["units"] if u["id"] == "core/systems/s3")
+        self.assertEqual(s3["component"], "S3")
+        self.assertLess(next(u for u in a["units"] if u["id"] == "core/systems/s2")["conformance"], 1)
+        # a model without file references still gets roles, and says why rules cannot be checked
+        m2 = dict(m, files={})
+        m2["types"] = {f"T{i}": {"file": f} for i, f in enumerate(m["files"])}
+        self.assertTrue(A.analyse(p, m2)["warnings"])
+
+    def test_django(self):
+        from archplan import architecture as A
+        files = ["src/proj/settings.py", "src/proj/urls.py",
+                 "src/proj/shop/apps.py", "src/proj/shop/models.py", "src/proj/shop/views.py",
+                 "src/proj/shop/api/serializers.py", "src/proj/shop/api/viewsets.py",
+                 "src/proj/shop/api/helpers.py",
+                 "src/proj/billing/apps.py", "src/proj/billing/models/__init__.py",
+                 "src/proj/billing/models/invoice.py", "src/proj/billing/admin.py",
+                 "src/proj/billing/templatetags/money.py"]
+        refs = {"src/proj/shop/models.py": ["src/proj/shop/views.py"],  # models import a view: a break
+                "src/proj/billing/admin.py": ["src/proj/shop/views.py"],  # another app's views: a break
+                "src/proj/shop/api/serializers.py": ["src/proj/shop/api/viewsets.py", "src/proj/billing/models/invoice.py"]}
+        m = {"components": {}, "types": {}, "files": {f: {"refs": [{"to": t} for t in refs.get(f, [])]} for f in files}}
+        self.assertTrue(A.is_django(files))
+        self.assertFalse(A.is_django(["src/a/apps.py", "src/a/models.py"]))
+        p = A.infer(m)
+        self.assertEqual(p["source"], "django")
+        self.assertEqual(p["units"][0]["glob"], "src/proj/**")
+        a = A.analyse(p, m)
+        self.assertEqual([u["id"] for u in a["units"]], ["src/proj/billing", "src/proj/shop"])
+        shop = {f["path"].rsplit("/", 1)[-1]: f["role"] for f in a["units"][1]["files"]}
+        self.assertEqual(shop, {"apps.py": None, "models.py": "models", "views.py": "views",
+                                "serializers.py": "serializers", "viewsets.py": "viewsets", "helpers.py": None})
+        billing = {f["path"].rsplit("/", 1)[-1]: f["role"] for f in a["units"][0]["files"]}
+        self.assertEqual((billing["invoice.py"], billing["money.py"]), ("models", "templatetags"))
+        counts = {r["id"]: r["count"] for r in a["rules"]}
+        self.assertEqual(counts, {"models-stay-low": 1, "apps-keep-views-private": 1, "serializers-not-views": 1})
+
+    def test_colors(self):
+        from archplan import architecture as A
+        bad = {"roles": [{"id": "x", "patterns": [], "color": '"/><script>'}]}
+        with self.assertRaises(ValueError):
+            A.validate(bad)
+        self.assertNotIn("color", A.clean_colors(bad)["roles"][0])
+        self.assertEqual(A.validate({"roles": [{"id": "x", "patterns": [], "color": "#3b82f6"}]})["roles"][0]["color"], "#3b82f6")
+
+
+class ArchitectureApiTest(TempProject):
+    def test_round_trip(self):
+        p = project.init(self.root)
+        p.model_path.write_text(json.dumps(synthetic_model()))
+        srv, url = serve_in_thread(p)
+        try:
+            st, d = call(url, "/api/architecture")
+            self.assertEqual((st, d["profile"]), (200, None))
+            prop = d["proposal"]
+            self.assertEqual(len(d["analysis"]["units"]), 6)
+            key = d["key"]
+            prop["roles"][0]["name"] = "Public API"
+            st, d = call(url, "/api/architecture", "PUT", {"profile": prop})
+            self.assertEqual((st, d["profile"]["status"]), (200, "proposed"))
+            self.assertNotEqual(d["key"], key)
+            self.assertEqual(call(url, "/api/architecture", "PUT", {"profile": {"roles": [{"name": "x"}]}})[0], 400)
+            st, d = call(url, "/api/architecture/lock", "POST", {})
+            self.assertEqual(d["profile"]["status"], "locked")
+            st, d = call(url, "/api/architecture/infer", "POST", {})
+            self.assertEqual((st, d["saved"]), (200, False))  # a locked profile stays
+            st, d = call(url, "/api/architecture")
+            self.assertEqual((d["profile"]["status"], d["profile"]["roles"][0]["name"]), ("locked", "Public API"))
+            self.assertNotIn("proposal", d)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        a = Agent(p)
+        self.assertEqual(a.get_architecture()["status"], "locked")
+        with self.assertRaises(ValueError):
+            a.update_profile(d["profile"])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli.main(["profile", "--dir", str(self.root)])
+        self.assertIn("_public.ex", buf.getvalue())
+
+    def test_python_exporter_files(self):
+        m = export(self.root)
+        f = m["files"]["shop/billing/invoice.py"]
+        self.assertEqual(f["component"], "shop.billing")
+        self.assertEqual([r["to"] for r in f["refs"]], ["shop/orders/model.py"])  # "from ..orders import model" is the module
+        self.assertEqual([r["to"] for r in m["files"]["shop/orders/model.py"]["refs"]], ["shop/billing/invoice.py"])
 
 
 if __name__ == "__main__":

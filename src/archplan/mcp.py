@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import sys
 
-from . import __version__, hotspots
+from . import __version__, architecture, hotspots
 from .model import ANCHORS, EDIT_OPS, dumps, find_items, get_item, violations
 from .project import Project, ProjectError, counts, read_json, write_json
 from .handover import Handovers, progress
@@ -101,6 +101,29 @@ TOOLS = [
                     "Use it to stay in the conversation while the human works in the editor.",
      "inputSchema": {"type": "object", "properties": {
          "timeout_seconds": {"type": "integer", "default": 120, "maximum": 600}}}},
+    {"name": "get_architecture",
+     "description": "The architecture profile: the unit kinds (an Eyra system, a Django app), the roles files play "
+                    "in a unit (found by file name: _public.ex, *_view.ex, models.py), and rules about who may call "
+                    "whom and which files come in pairs. Returns role coverage, rule breaks with examples and the "
+                    "least conforming units. Without a saved profile it returns archplan's proposal. While the "
+                    "profile is proposed, improve it with update_profile: give roles clear names and descriptions, "
+                    "merge roles that are the same thing, drop rules that are noise, and write rules the human "
+                    "states in a thread. Discuss breaks worth fixing in a thread.",
+     "inputSchema": {"type": "object", "properties": {
+         "breaks": {"type": "integer", "default": 5, "maximum": 50, "description": "examples per rule"},
+         "full": {"type": "boolean", "default": False, "description": "also return the whole profile, to edit it"}}}},
+    {"name": "update_profile",
+     "description": "Replace the proposed architecture profile (the whole object, as get_architecture's profile "
+                    "has it; use full=true there to get it). Only while the profile is proposed: once the human "
+                    "locked it in, propose changes in a thread instead. Profile: units [{kind, glob}], roles "
+                    "[{id, name, patterns, color, description}] where a pattern without a slash matches the file "
+                    "name and one with a slash the path inside the unit, rules [{id, text, type: calls, from: role "
+                    "| other-units | any, to: role or [roles], allow: true (only these) | false (never these), "
+                    "scope: same-unit | other-units | any} or {id, text, type: pair, role, needs, match: "
+                    "[\"<stem>_view.ex -> <stem>_view_builder.ex\"]}], layers [{name, components}].",
+     "inputSchema": {"type": "object", "properties": {
+         "profile": {"type": "object"}, "note": {"type": "string", "description": "what you changed and why"}},
+         "required": ["profile"]}},
     {"name": "get_handover",
      "description": "The planned refactors the human sent you to implement, in order: per refactor its thread, "
                     "title, summary, state, anchor, the items it mentions and a digest of the discussion; plus the "
@@ -233,6 +256,22 @@ class Agent:
     def refresh_model(self):
         return {"counts": self.p.export(require_trust=True), "note": "The editor reloads the as-is model and rebases the target."}
 
+    def get_architecture(self, breaks=5, full=False):
+        st = architecture.Architecture(self.p).state()
+        out = architecture.summary(st, min(int(breaks), 50))
+        if full:
+            out["profile"] = st.get("profile") or st.get("proposal")
+        return out
+
+    def update_profile(self, profile, note=""):
+        a = architecture.Architecture(self.p)
+        cur = a.profile()
+        if cur and cur.get("status") == "locked":
+            raise ValueError("the human locked in this profile; propose the change in a thread instead")
+        prof = a.save({**profile, "note": note or profile.get("note", "")}, "proposed")
+        return {"saved": True, "status": prof["status"],
+                "summary": architecture.summary(a.state(), 3)}
+
     def get_handover(self):
         h = self.handovers.current()
         if not h:
@@ -339,11 +378,13 @@ ACTIVITY = {
     "wait_for_comments": "Waiting for comments",
     "get_hotspots": "Analysing git history for hotspots",
     "get_handover": "Reading the planned refactors",
+    "get_architecture": "Reading the architecture profile",
+    "update_profile": "Updated the architecture profile",
     "propose_batches": "Proposed how to split the refactors into batches",
     "set_refactor_state": "{progress}",
 }
 DONE = {"refresh_model": "Re-exported the model"}  # long calls: a second entry when they finish
-AFTER = ("reply", "open_thread", "edit_target", "propose_batches", "set_refactor_state")  # recorded only when they succeed
+AFTER = ("reply", "open_thread", "edit_target", "propose_batches", "set_refactor_state", "update_profile")  # recorded only when they succeed
 
 
 def record(p: Project, store: Store, tool: str, args: dict, done: bool = False) -> None:

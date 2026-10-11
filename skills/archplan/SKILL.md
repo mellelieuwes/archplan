@@ -84,6 +84,16 @@ concept, a data format or a duplicated rule. Check a few in the code, then
 `open_thread` on `group:comp:<a>|comp:<b>` with what ties them together.
 `archplan hotspots` prints the same in a terminal.
 
+### The architecture profile
+
+`get_architecture` returns the profile (units, file roles, rules, layers)
+and how the code conforms: role coverage, unmatched files, and rule breaks
+with examples. Use a break as evidence in a thread, with the file and line.
+To change a proposed profile, send the whole profile with
+`update_profile(profile, note)`. It stays proposed until the human locks it
+in the editor; a locked profile is refused. `archplan profile` prints the
+same in a terminal.
+
 ## 6. Model before you build
 
 When the human asks you to model a change, use `edit_target` (add or move
@@ -148,3 +158,4 @@ progress.
 | `archplan export` | re-export the as-is model from the code |
 | `archplan threads --waiting agent` | threads that wait on you, as text |
 | `archplan hotspots` | hotspots and hidden coupling from the git history |
+| `archplan profile` | the architecture profile and its rule breaks |

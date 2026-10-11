@@ -10,6 +10,7 @@
   archplan mcp                   MCP server on stdio, for an agent
   archplan watch                 one line per human comment, plan change or decided suggestion
   archplan hotspots [--since N]  components that change often, and ones that change together
+  archplan profile [infer|show]  the architecture profile: roles, rules and where the code breaks them
   archplan hook                  Claude Code hook: tell the agent about new comments
   archplan export-python         built-in exporter for Python projects
   archplan export-elixir         exporter for Elixir/Mix projects (needs mix)
@@ -301,6 +302,26 @@ def cmd_hotspots(a):
     print(f"\n({time.monotonic() - t:.1f}s; cached in {p.path('hotspots.json').relative_to(p.root)})", file=sys.stderr)
 
 
+def cmd_profile(a):
+    from . import architecture
+    p = project(a)
+    arch = architecture.Architecture(p)
+    try:
+        if a.action == "infer":
+            proposal, saved = arch.infer()
+            print(f"proposed a profile ({proposal['source']}): "
+                  + (f"saved to {arch.path.relative_to(p.root)}" if saved
+                     else "not saved, the profile is locked in; showing the locked one"), file=sys.stderr)
+        st = arch.state()
+    except architecture.ArchitectureError as e:
+        die(str(e))
+    if a.json:
+        return print(json.dumps(st, indent=2, ensure_ascii=False))
+    if st.get("profile") is None:
+        print("No profile saved yet; this is the proposal. Save it with `archplan profile infer`.\n")
+    print(architecture.text(st))
+
+
 def cmd_export_python(a):
     from .pyexport import export
     root = Path(a.root or ".").resolve()
@@ -328,6 +349,7 @@ Start, in the repository root:
 
 Then, to see where the code changes most:
   archplan hotspots  hotspots and hidden coupling from the git history
+  archplan profile   the conventions inside units (roles, rules) and where code breaks them
 
 With Claude Code: install the plugin, then type /archplan in the repository.
   claude plugin marketplace add vloothuis/archplan
@@ -390,6 +412,9 @@ def main(argv=None):
     s = add("watch", cmd_watch, "print human comments and plan changes as they happen")
     s.add_argument("--interval", type=float, default=2)
     add("hook", cmd_hook, "Claude Code hook (reads the hook event on stdin)")
+    s = add("profile", cmd_profile, "show or infer the architecture profile (roles, rules, breaks)")
+    s.add_argument("action", nargs="?", choices=["show", "infer"], default="show")
+    s.add_argument("--json", action="store_true", help="the profile and the full analysis as JSON")
     s = add("hotspots", cmd_hotspots, "components that change often, and pairs that change together (from git)")
     s.add_argument("--since", type=int, default=365, metavar="DAYS", help="days of history (default: 365)")
     s.add_argument("--json", action="store_true", help="the full analysis as JSON")

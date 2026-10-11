@@ -82,6 +82,7 @@ defmodule ArchplanElixir.Export do
       "layers" => layers(ctx),
       "components" => components(ctx),
       "dependencies" => dependencies(ctx),
+      "files" => files(ctx),
       "policy" => policy(ctx, boundaries),
       "types" => types,
       "sequences" => if(seq_dir, do: sequences(ctx, seq_dir), else: %{})
@@ -285,6 +286,32 @@ defmodule ArchplanElixir.Export do
         }
     end)
   end
+
+  # File-level references: for each source file, the other project files its
+  # modules refer to, with the first line. Used by architecture profiles.
+  defp files(ctx) do
+    for {mod, _} <- ctx.mods, reduce: %{} do
+      acc ->
+        file = ctx.rel[mod]
+        entry = Map.get(acc, file, %{"component" => ctx.comp_of[mod], "refs" => []})
+        seen = MapSet.new(entry["refs"], & &1["to"])
+
+        {rs, _} =
+          refs(ctx, mod)
+          |> Enum.reduce({Enum.reverse(entry["refs"]), seen}, fn {target, line}, {rs, seen} ->
+            to = ctx.rel[target]
+
+            if to == nil or to == file or MapSet.member?(seen, to),
+              do: {rs, seen},
+              else: {[file_ref(to, line) | rs], MapSet.put(seen, to)}
+          end)
+
+        Map.put(acc, file, Map.put(entry, "refs", Enum.reverse(rs)))
+    end
+  end
+
+  defp file_ref(to, nil), do: %{"to" => to}
+  defp file_ref(to, line), do: %{"to" => to, "line" => line}
 
   defp loc(file, nil), do: file
   defp loc(file, line), do: "#{file}:#{line}"

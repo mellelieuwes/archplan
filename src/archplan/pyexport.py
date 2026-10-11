@@ -3,7 +3,8 @@
 Components are packages (directories with __init__.py) and top-level modules.
 Dependencies are imports between them. Types are top-level classes, with
 annotated fields, public methods and base classes. Forbidden contracts from
-import-linter become deny rules.
+import-linter become deny rules. The files section lists, per module file, the
+project files it imports. Tests and Django migrations are left out.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from collections import defaultdict
 from pathlib import Path
 
 SKIP = {".git", ".hg", ".venv", "venv", "env", "node_modules", "build", "dist", "__pycache__", ".tox", ".nox",
-        ".mypy_cache", ".pytest_cache", ".ruff_cache", "site-packages", ".archplan", ".ignored"}
+        ".mypy_cache", ".pytest_cache", ".ruff_cache", "site-packages", ".archplan", ".ignored", "migrations"}
 MANY = {"list", "List", "Sequence", "MutableSequence", "Iterable", "Iterator", "set", "Set", "frozenset",
         "FrozenSet", "tuple", "Tuple", "dict", "Dict", "Mapping", "MutableMapping", "Collection", "deque"}
 OPTIONAL = {"Optional", "Annotated", "ClassVar", "Final"}
@@ -290,6 +291,25 @@ def export(root: Path, packages: list[str] | None = None, granularity: str = "au
     deps = [{"from": a, "to": b, "weight": len(e["files"]), "evidence": e["evidence"]}
             for (a, b), e in sorted(edges.items())]
 
+    def mod_for(qual: str) -> str | None:
+        """The module a module or symbol name lives in."""
+        q = qual
+        while q:
+            if q in mods:
+                return q
+            q = q.rpartition(".")[0]
+        return None
+
+    file_refs = {}
+    for m in mods.values():
+        refs_out, seen = [], {m.rel}
+        for target, line in m.imports:
+            t = mod_for(target)
+            if t and mods[t].rel not in seen:
+                seen.add(mods[t].rel)
+                refs_out.append({"to": mods[t].rel, "line": line})
+        file_refs[m.rel] = {"component": comp_of_mod[m.name], "refs": refs_out}
+
     comps = {}
     for cid in sorted(set(comp_of_mod.values())):
         m = mods[cid]
@@ -312,6 +332,7 @@ def export(root: Path, packages: list[str] | None = None, granularity: str = "au
         "layers": [],
         "components": comps,
         "dependencies": deps,
+        "files": dict(sorted(file_refs.items())),
         "policy": {"default": "allow", "rules": rules,
                    **({"enforcer": {"tool": "import-linter", "command": "lint-imports"}} if rules else {})},
         "types": types,

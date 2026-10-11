@@ -21,6 +21,7 @@ JSON Schema: [`archmodel.schema.json`](archmodel.schema.json).
   "layers": [ ... ],
   "components": { "<id>": { ... } },
   "dependencies": [ ... ],
+  "files": { "<path>": { ... } },
   "policy": { ... },
   "types": { "<id>": { ... } },
   "sequences": { "<id>": { ... } },
@@ -109,6 +110,25 @@ not only those explained by the types section.
 
 `weight` is the number of files (or import sites) that cause the edge.
 `evidence` lists some of them as `file:line`.
+
+## files
+
+Optional. File-level references, for architecture profiles: which project
+files each source file imports or calls. Keys are paths relative to the
+repository root, like type `file` values.
+
+```json
+"internal/dataentry/handler.go": {
+  "component": "dataentry",
+  "refs": [{ "to": "internal/store/store.go", "line": 12 }]
+}
+```
+
+- `refs` lists each other project file once, with the line of the first
+  reference when known. References to the file itself and to code outside
+  the project are left out.
+- A model without `files` still works. archplan then knows a file's role in
+  a profile, but cannot check who calls whom.
 
 ## policy
 

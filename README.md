@@ -60,6 +60,7 @@ archplan up        # starts the editor in the background and prints its URL
 | Comment on an item, or shift-click several items and comment on the group | Is told at once: the plugin's monitor sends each comment, and a hook lists waiting threads at every prompt |
 | Read replies: orange **decision** threads need your choice (click an option); **feedback** threads only need reading | Replies with `reply`, marks a reply as a decision only when it is blocked on you |
 | Preview a suggestion and accept all, some or none of its changes | Proposes a refactor of the target with `edit_target`; learns the outcome from the monitor |
+| Review the architecture profile: units, file roles and the rules between them | Proposes a profile with `update_profile`; checks code against it with `get_architecture` |
 | Look at hotspots and components that change together | Finds hidden coupling in the git history with `get_hotspots` and opens a thread on it |
 | Lock in a settled thread as a planned refactor, then go on with the open discussions | Leaves planned refactors alone; they do not wait on it |
 | Order the planned refactors and send them all as one handover: all in one go, or ask for a split first | Reads them with `get_handover`; for a split, proposes batches with `propose_batches` |
@@ -79,6 +80,7 @@ Everything is stored in `.archplan/` in the repository:
 | `threads.json` | the comment threads |
 | `suggestions.json` | target changes the agent proposed, and what you decided |
 | `handovers.json` | planned refactors you sent to the agent, its batches and progress |
+| `architecture.json` | the architecture profile: units, roles, rules and layers |
 | `activity.json` | what the agent did last, shown in the editor |
 | `hotspots.json` | the cached git history analysis |
 
@@ -102,6 +104,7 @@ In a message, `@[Label](anchor)` mentions a model item, for example
 | `archplan mcp` | the MCP server, on stdio |
 | `archplan watch` | one line per human comment, plan change or decided suggestion |
 | `archplan hotspots [--since DAYS] [--json]` | components that change most, and pairs that change together without a dependency |
+| `archplan profile [infer\|show] [--json]` | propose an architecture profile, or show how the code conforms to it |
 | `archplan hook` | Claude Code hook: report threads that wait on the agent |
 | `archplan export-python` | the built-in Python exporter |
 | `archplan export-elixir`, `archplan trace-elixir` | the Elixir exporter and test tracer |
@@ -119,6 +122,26 @@ The analysis maps each changed file to a component with the model's `match`
 patterns and `path`. Commits that touch more than 50 files are skipped as bulk
 changes. Only git runs, with hooks, fsmonitor and signature checks switched
 off. The result is cached per HEAD in `.archplan/hotspots.json`.
+
+## Architecture profile
+
+The profile in `.archplan/architecture.json` describes the shape every unit
+of the code should have. A unit is a folder that matches a glob, such as
+`core/systems/*` or a Django app. A role is a kind of file inside a unit,
+found by file name patterns such as `*_view.ex` or `models/**`. Rules say
+which roles may call which (`calls`), or that one file needs a partner
+(`pair`, for example `<stem>_view.ex -> <stem>_view_builder.ex`). Layers
+order the components from top to bottom.
+
+`archplan profile infer` proposes a profile. For Django code (a
+`manage.py` or `settings.py`, and apps with `apps.py` and `models.py`) it
+uses a built-in Django profile. Otherwise it looks for file name shapes that
+recur in at least 30% of the units, and keeps the call rules that hold for at
+least 90% of the file references. A proposal never overwrites a locked
+profile. `archplan profile` shows the role coverage and the rule breaks.
+
+Rules need the file references in the model's `files` section. The Python
+and Elixir exporters write it.
 
 ## Exporters
 

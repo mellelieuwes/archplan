@@ -18,7 +18,7 @@
   --warn:#422006;--warn-ink:#fcd34d;--warn-line:#a16207;--quote:#292524;--agent:#a78bfa;--agent-bg:#2e1065;--agent-ink:#c4b5fd;--human:#38bdf8;--glass:rgba(17,24,39,.92);
   --addbg:#052e16;--add-ink:#86efac;--add-line:#166534;--rembg:#450a0a;--rem-ink:#fca5a5;color-scheme:dark}
 /* The diagram keeps its light palette and is inverted, so layer and diff colours keep their hue. */
-:root[data-theme=dark] #cy,:root[data-theme=dark] #seq,:root[data-theme=dark] #legend i,:root[data-theme=dark] #ovLegend i,:root[data-theme=dark] .snap svg,:root[data-theme=dark] #ovLegend .ramp,:root[data-theme=dark] #ovLegend svg{filter:invert(.92) hue-rotate(180deg)}
+:root[data-theme=dark] #cy,:root[data-theme=dark] #seq,:root[data-theme=dark] #roles svg,:root[data-theme=dark] #legend i,:root[data-theme=dark] #ovLegend i,:root[data-theme=dark] .snap svg,:root[data-theme=dark] #ovLegend .ramp,:root[data-theme=dark] #ovLegend svg{filter:invert(.92) hue-rotate(180deg)}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:var(--ink);background:var(--bg)}
 code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
@@ -154,7 +154,7 @@ pre.raw{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);b
 #stage{flex:1;position:relative;min-width:0;background:var(--panel);display:flex;flex-direction:column}
 #toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel);position:relative;z-index:20}
 #canvas{position:relative;flex:1;min-height:0}
-#cy,#seq{position:absolute;inset:0}
+#cy,#seq,#roles{position:absolute;inset:0}#roles{overflow:hidden;cursor:grab}#canvas.panning #roles,#canvas.space #roles{cursor:grabbing}.rempty{padding:60px 30px;color:var(--mute);text-align:center}
 #seq{overflow:hidden;cursor:grab}#cy{cursor:grab}#canvas.panning #cy,#canvas.panning #seq,#canvas.space #cy,#canvas.space #seq{cursor:grabbing}#canvas.space #cy *,#canvas.space #seq *{cursor:grabbing!important}
 #gloss{position:absolute;inset:0;overflow:auto;padding:16px 20px 60px;display:none}
 #gloss table{border-collapse:collapse;width:100%;margin-bottom:6px}
@@ -224,11 +224,25 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
 .batch .chip{cursor:grab}.hohist{font-size:12.5px;margin:0 0 10px}
 #hoDlg .opt{display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--line);border-radius:8px;margin:6px 0;cursor:pointer}
 #hoDlg .opt:has(input:checked){border-color:var(--acc);background:var(--sel)}
+/* architecture profile */
+.arch-h{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.role{display:grid;grid-template-columns:14px minmax(90px,150px) 1fr 104px;gap:10px;align-items:center;padding:6px 4px;border-bottom:1px solid var(--soft);font-size:13.5px}.role[data-act]{cursor:pointer}.role[data-act]:hover{background:var(--soft)}
+.role .mono{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.role.edit{grid-template-columns:44px minmax(90px,150px) 1fr;background:var(--soft);border-radius:8px;padding:8px}.role.edit input[type=color]{width:40px;height:30px;padding:2px}
+.sw{width:12px;height:12px;border-radius:3px;display:inline-block;vertical-align:-1px}
+.cov{display:grid;gap:2px;font-size:12px}.bar{display:block;height:6px;background:var(--soft);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}
+.arule{display:flex;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid var(--soft);cursor:pointer;font-size:13.5px}.arule:hover,.arule.open{background:var(--soft)}
+ul.breaks{margin:4px 0 8px;padding-left:18px;font-size:13px;max-height:260px;overflow:auto}ul.breaks li{margin:2px 0}
+.layer{border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:4px 0}.layer.over{border-color:var(--acc);background:var(--sel)}.layer.un{border-style:dashed}
+.lh2{display:flex;gap:8px;align-items:center;font-size:13.5px}.lchip{font-size:12.5px}.lchip[draggable=true]{cursor:grab}
+.rchip{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;border:1px solid var(--line);border-radius:999px;padding:1px 8px}.rchip i{width:8px;height:8px;border-radius:2px}.rchip.miss{border-style:dashed;color:var(--mute)}.rchip.miss i{opacity:.35}
 </style>
 </head>
 <body>
 <header>
   <div class="brand">archplan</div><span class="proj" id="proj">demo</span><span class="mono" id="repo"></span>
+  <div class="spacer"></div>
+  <div class="seg" id="leftModes" hidden title="What the left column shows"><button data-left="plan">Plan</button><button data-left="arch">Architecture</button></div>
   <div class="spacer"></div>
   <button class="pill agent" id="agentPill" hidden title="What Claude did last"></button>
   <button class="pill warn" id="sugPill" hidden title="Show the first suggestion"></button>
@@ -263,6 +277,9 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
   <p>When Claude proposes a change to the target, it arrives as a <b>suggestion</b>. Its card lists each change. Untick the ones you do not want, then accept or reject. The card says how the plan would grow or shrink. <i>With suggestion</i> in the mode switch shows the change in the diagram, with new items dashed green. A change Claude makes directly shows in <i>Diff</i>, and Undo reverts it. After Claude changes the code, the model reloads and the plan shrinks.</p>
   <h3>Overlays</h3>
   <p><i>Change frequency</i> colours each component by the number of commits that touched it in the last year. <i>Co-change</i> draws a purple dashed line between components that often change in the same commit. A thick line means there is no dependency between them: hidden coupling. <i>Fan-in</i> and <i>fan-out</i> colour components by how many others use them, or how many they use. The first two need git. Overlays work in the Components view.</p>
+  <h3>Architecture</h3>
+  <p>When the project has an architecture profile, the header shows <i>Plan</i> and <i>Architecture</i>. The profile says what a unit is (for example a system or a Django app), which roles its files have (recognised by file name patterns), the rules between roles and the layers. archplan proposes a profile from the code. Edit it, then lock it in. After that, every export is checked against it. Click a rule to see where it breaks.</p>
+  <p>The <i>Roles</i> view shows one unit with its files in lanes per role. A dashed box is a role the unit lacks. A red dashed line is a rule break. <i>Compare with</i> shows a second unit below it. Double-click a unit in the Components view to open it here. The <i>Conformance</i> overlay colours each unit by how well it follows the profile.</p>
   <h3 id="keys">Keyboard shortcuts</h3>
   <table>
     <tr><td><kbd>⌘K</kbd></td><td>Search components, types, tasks and actions</td></tr>
@@ -293,6 +310,7 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
     <div id="toolbar">
       <div class="seg" id="views">
         <button data-view="components">Components</button>
+        <button data-view="roles" id="rolesBtn" hidden title="The files of one unit, in lanes per role">Roles</button>
         <button data-view="types">Types</button>
         <button data-view="seq">Sequences</button>
         <button data-view="glossary">Glossary</button>
@@ -304,6 +322,7 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
         <button data-mode="sugg" id="suggMode" hidden title="The target with the pending suggestion applied">With suggestion</button>
       </div>
       <select id="seqSel" style="display:none;max-width:240px" title="Sequence"></select>
+      <select id="unitSel" style="display:none;max-width:240px" title="Unit"></select><select id="cmpSel" style="display:none;max-width:240px" title="Show a second unit below, to compare"></select>
       <button class="btn" id="seqInfo" style="display:none" title="Edit this sequence: add calls and participants">Sequence page</button>
       <div class="focus" id="focusBox"><input id="focusIn" list="focusList" placeholder="⌖ Focus…"><datalist id="focusList"></datalist><span id="chips"></span></div>
       <div class="menu-wrap"><button class="btn" id="viewBtn" title="What the diagram shows">View ▾</button>
@@ -320,6 +339,7 @@ body.connect-mode #cy,#cy.connecting{cursor:crosshair}
     <div id="canvas">
       <div id="cy"></div>
       <div id="seq"></div>
+      <div id="roles"></div>
       <div id="gloss"></div>
       <div id="legend"></div>
       <div id="ovLegend" hidden></div>
@@ -513,7 +533,7 @@ const needs = t => whoNext(t) !== 'human' ? '' : t.messages[t.messages.length - 
 const mark = key => openOn(key) ? '💬 ' : '';
 async function api(method, path, body) {
   const r = await fetch(path, {method, headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
-  if (!r.ok) throw new Error(`${method} ${path}: ${r.status}`);
+  if (!r.ok) { const t = await r.text().catch(() => ''); let m = ''; try { const j = JSON.parse(t); m = j.error || j.detail || j.message || ''; } catch {} throw new Error(m ? String(m) : `${method} ${path}: ${r.status}`); }
   return r.json();
 }
 const nowStamp = () => new Date().toISOString().replace(/\.\d+Z$/, 'Z');
@@ -554,6 +574,7 @@ async function pollThreads() {
       if (d.suggestions_version !== known.sugVer) { known.sugVer = d.suggestions_version; loadSuggestions(); }
       if (d.activity_etag !== known.actEtag) { known.actEtag = d.activity_etag; loadActivity(); }
       if (d.handover_version !== known.hoVer) { known.hoVer = d.handover_version; loadHandover(); }
+      if ((d.architecture_version ?? d.architecture_etag) !== known.archVer) { known.archVer = d.architecture_version ?? d.architecture_etag; loadArch(); }
     } catch { await new Promise(r => setTimeout(r, 3000)); }
   }
 }
@@ -903,6 +924,7 @@ function anchorLabel(k) {
   if (kind === 'tedge') { const [ek, rest] = [x, r.slice(1).join(':')]; const [f, t] = rest.split('->'); return `${ek} ${qname(toBe.types[f] ? toBe : asIs, f)} → ${qname(toBe.types[t] ? toBe : asIs, t)}`; }
   if (kind === 'type') return qname(toBe.types[x] ? toBe : asIs, x);
   if (kind === 'comp') return 'component ' + cname(toBe, x);
+  if (kind === 'file') return 'file ' + r.join(':');
   if (kind === 'concept') return 'concept ' + conceptName(toBe, x);
   if (kind === 'leak') return `leak: ${cname(toBe, x)} uses ${conceptName(toBe, y)} terms`;
   if (kind === 'cedge') { const [f, t] = r.join(':').split('->'); return `dependency ${cname(toBe, f)} → ${cname(toBe, t)}`; }
@@ -979,7 +1001,7 @@ function applyDemo() {
   for (const [k, v] of [['type:PaymentClient', 'Charge must be idempotent. Use the order ID as idempotency key?'],
     ['msg:PlaceOrder:m5', 'Is fire-and-forget acceptable, or do we need an outbox for at-least-once delivery?']])
     if (!threads.some(t => t.anchor === k && t.messages[0].text === v)) addThread(k, v);
-  mode = 'diff'; sel = null; multi = []; verifyStage = 0; page = 'plan';
+  mode = 'diff'; sel = null; multi = []; verifyStage = 0; page = homePage();
   positions = {components: {}, types: {}, glossary: {}}; viewports = {};
   render();
 }
@@ -1960,7 +1982,7 @@ document.addEventListener('keydown', ev => {
   if (ev.key === '?' && !ev.target.closest?.('input, textarea, select')) return showHelp($('help').hidden);
   if (ev.key === 'Shift') { shiftDown = true; cy.autoungrabify(true); document.body.classList.add('connect-mode'); }
   if (ev.target.closest?.('input, textarea, select')) return;
-  if (ev.key === 'Escape') { closePop(); acHide(); sel = null; multi = []; page = 'plan'; render(); return; }
+  if (ev.key === 'Escape') { closePop(); acHide(); sel = null; multi = []; page = homePage(); render(); return; }
   if (ev.metaKey || ev.ctrlKey || ev.altKey) { if (ev.key === 'z') { ev.preventDefault(); $('undoBtn').click(); } return; }
   const V = {1: 'components', 2: 'types', 3: 'seq', 4: 'glossary'}[ev.key];
   if (V) { view = V; if (sel?.kind === 'msg' !== (V === 'seq')) sel = null; return render(); }
@@ -2107,6 +2129,7 @@ $('emptyMsg').addEventListener('click', e => {
   setFocusIds([]); render(true);
 });
 function applySel() {
+  if (view === 'roles') return renderRoles();
   cy.elements().removeClass('sel msel');
   const mp = {type: 't:', comp: 'c:', tedge: 'e:', cedge: 'ce:', concept: 'k:'};
   for (const a of multi) { const [k, ...r] = a.split(':'), id = r.join(':'); if (mp[k]) { cy.getElementById(mp[k] + id).addClass('msel'); if (k === 'cedge') cy.getElementById('r:' + id).addClass('msel'); } }
@@ -2304,7 +2327,7 @@ const NAV = {
   seq: {el: () => $('seq'), get: () => seqVP, box: () => seqDims.W ? {x1: 0, y1: 0, w: seqDims.W, h: seqDims.H} : null,
     set: (z, x, y) => { Object.assign(seqVP, {z, x, y}); $('seqRoot')?.setAttribute('transform', seqTf()); zoomReadout(); }}
 };
-const navTarget = () => view === 'seq' ? NAV.seq : $('cy').style.visibility !== 'hidden' ? NAV.cy : null;
+const navTarget = () => view === 'seq' ? NAV.seq : view === 'roles' ? NAV.roles : $('cy').style.visibility !== 'hidden' ? NAV.cy : null;
 const clampZ = z => Math.max(ZMIN, Math.min(ZMAX, z));
 function zoomReadout() { const t = navTarget(); $('zoomPct').textContent = t ? Math.round(t.get().z * 100) + '%' : ''; }
 // Zoom by a factor around a point in the canvas (default: its centre).
@@ -2501,6 +2524,7 @@ function inspector() {
   const roMsg = roNote();
   if (!sel) return '';
   if (sel.kind === 'pair') return pairPage();
+  if (sel.kind === 'file') return filePage();
   if (sel.kind === 'type') {
     const t = m.types[sel.id];
     if (!t) return `<div class="ins-h"><b>${esc(qname(asIs, sel.id))}</b> ${badge('removed')}</div><p class="mute">Removed in the target model.</p>`;
@@ -2534,6 +2558,7 @@ function inspector() {
     return `${roMsg}<div class="ins-h"><span class="kind">package</span><b>${esc(c.name)}</b>${mode === 'diff' ? badge(D.comp[sel.id]) : ''}</div><div class="anchor mono">📍 ${esc(c.path)}</div>
       ${compMetrics(m, sel.id, out, inn)}
       <div class="row"><button class="btn" data-act="comp.focus">Focus</button><button class="btn" data-act="comp.types">Show types</button>${cycleOf(mode === 'asis' ? asIs : toBe, sel.id).length ? `<button class="btn" data-act="comp.cycle" title="Select the components and dependencies of the import cycle">Select cycle (${cycleOf(mode === 'asis' ? asIs : toBe, sel.id).length})</button>` : ''}</div>
+      ${unitBox(sel.id)}
       <h4>Types</h4>${(() => { const ts = Object.entries(m.types).filter(([, t]) => t.comp === sel.id); return `<ul class="members">${ts.slice(0, 40).map(([k, t]) => `<li><span><span class="kind">${t.kind}</span> ${esc(t.name)}</span></li>`).join('') || '<li class="mute">none</li>'}${ts.length > 40 ? `<li class="mute">… ${ts.length - 40} more</li>` : ''}</ul>`; })()}
       <h4>Depends on</h4><p>${out.map(e => esc(cname(m, e.to)) + ` <span class="mute">(${edgeCount(e)})</span>`).join(', ') || '<span class="mute">nothing</span>'}</p>
       <h4>Used by</h4><p>${inn.map(e => esc(cname(m, e.from)) + ` <span class="mute">(${edgeCount(e)})</span>`).join(', ') || '<span class="mute">nothing</span>'}</p>
@@ -2911,7 +2936,7 @@ $('hoDlg').addEventListener('click', async e => {
 $('hoDlg').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); $('hoDlg').hidden = true; } });
 $('sendBtn').addEventListener('click', hoDialog);
 // Keep what the user types in the lock-in and edit forms across live updates.
-$('panel').addEventListener('input', e => { if (/^(lk|rfe)-/.test(e.target.id)) drafts[e.target.id] = e.target.value; });
+$('panel').addEventListener('input', e => { if (/^(lk|rfe|ar)-/.test(e.target.id)) drafts[e.target.id] = e.target.value; });
 const clearDrafts = pre => Object.keys(drafts).filter(k => k.startsWith(pre)).forEach(k => delete drafts[k]);
 // Drag cards to reorder the stack; drag chips between the batches of a proposal.
 $('panel').addEventListener('dragstart', e => {
@@ -2932,7 +2957,7 @@ $('panel').addEventListener('dragover', e => {
   tgt.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
 });
 $('panel').addEventListener('drop', e => {
-  if (!drag) return;
+  if (!drag || drag.kind === 'layer') return;
   e.preventDefault();
   const d = drag; drag = null; dropMarks();
   if (d.kind === 'rf') {
@@ -2974,6 +2999,275 @@ Object.assign(actions, {
     hoAsk = false; await replyThread(id, `About the batch proposal: ${v}`);
     toast('Sent to Claude in the thread of refactor 1.');
   },
+});
+// ---------- architecture profile and the Roles view ----------
+// GET /api/architecture gives the profile (or a proposal when there is none)
+// and how the code conforms to it. Without that endpoint, both stay hidden.
+let ARCH = null, leftMode = localStorage.getItem('archplan.left') || 'plan', ruleOpen = null, roleEdit = null, unitSel = '', unitCmp = '', archHi = null;
+let rolesDims = {W: 0, H: 0};
+const RVP = {u: null, z: 1, x: 0, y: 0}, rTf = () => `matrix(${RVP.z},0,0,${RVP.z},${RVP.x},${RVP.y})`;
+const ROLE_COLORS = ['#2563eb', '#0891b2', '#7c3aed', '#db2777', '#16a34a', '#65a30d', '#d97706', '#64748b', '#dc2626', '#0d9488'];
+const homePage = () => leftMode === 'arch' && ARCH ? 'arch' : 'plan';
+const archAn = () => ARCH?.analysis || {};
+const archUnits = () => archAn().units || [];
+const archProfile = () => ARCH?.profile || ARCH?.proposal || null;
+const unitById = id => archUnits().find(u => u.id === id);
+const unitOfComp = c => archUnits().find(u => u.component === c);
+const roleOf = id => (archProfile()?.roles || []).find(r => r.id === id);
+const roleColor = (r, i) => /^#[0-9a-fA-F]{3,8}$/.test(r?.color || '') ? r.color : ROLE_COLORS[(i ?? 0) % ROLE_COLORS.length];
+// A break belongs to a unit if the server names it, or if either file lies in it.
+const unitBreaks = id => { const u = unitById(id), has = p => !!p && (u?.files || []).some(f => f.path === p); return (archAn().rules || []).flatMap(r => (r.breaks || []).filter(b => b.unit === id || has(b.from) || has(b.to)).map(b => ({...b, rule: r.id, text: r.text}))); };
+const samePath = (a, b) => !!a && !!b && (a === b || a.endsWith('/' + b) || b.endsWith('/' + a));
+const unitOfFile = p => archUnits().find(u => (u.files || []).some(f => f.path === p)) || archUnits().filter(u => u.path && p.startsWith(u.path)).sort((a, b) => b.path.length - a.path.length)[0];
+const baseName = p => (p || '').split('/').pop();
+const unitName = u => !u ? '' : u.component ? cname(toBe, u.component) : baseName(u.id);
+const unitNameOf = id => unitById(id) ? unitName(unitById(id)) : baseName(id);
+const trunc = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+const conf = u => u?.conformance == null ? '' : ` · conformance ${Math.round(+u.conformance * 100)}%`;
+function defaultUnit() {
+  const us = archUnits();
+  return (us.map(u => [unitBreaks(u.id).length, u]).sort((a, b) => b[0] - a[0])[0] || [])[1]?.id || '';
+}
+async function loadArch() {
+  if (!collab) return;
+  let d = null;
+  try { d = await api('GET', '/api/architecture'); } catch { d = null; }
+  ARCH = d && 'profile' in d ? d : null;
+  if (!ARCH) { if (view === 'roles') view = 'components'; if (page === 'arch') page = 'plan'; if (overlay === 'conformance') overlay = 'none'; }
+  else {
+    if (!unitById(unitSel)) unitSel = defaultUnit();
+    if (unitCmp && !unitById(unitCmp)) unitCmp = '';
+    if (!sel && !multi.length && page === 'plan' && leftMode === 'arch') page = 'arch';
+  }
+  if (D) render();
+}
+function setLeft(m) {
+  leftMode = m; localStorage.setItem('archplan.left', m);
+  sel = null; multi = []; page = homePage();
+  if (view === 'seq') renderSeq(); else applySel();
+  renderSide(); $('panel').scrollTop = 0;
+}
+$('leftModes').addEventListener('click', e => { const b = e.target.closest('[data-left]'); if (b) setLeft(b.dataset.left); });
+async function archCall(method, path, body, what) {
+  try { await api(method, path, body); } catch (err) { toast(`Could not ${what}: ${err.message}`); }
+  await loadArch();
+}
+function editProfile(fn) {
+  const p = clone(ARCH.profile); fn(p);
+  ARCH.profile = p; renderSide();
+  return archCall('PUT', '/api/architecture', {profile: p}, 'save the profile');
+}
+
+// The left column in Architecture mode.
+function archPage() {
+  const P = ARCH.profile, Q = ARCH.proposal, an = archAn(), X = P || Q, ro = !P;
+  const head = P ? `<div class="arch-h"><div class="doc-title" style="margin:0">${esc(P.name || 'Architecture profile')}</div><span class="pill ${P.status === 'locked' ? 'add' : 'warn'}">${P.status === 'locked' ? 'locked' : 'proposed · not locked'}</span><span class="spacer"></span>${P.status === 'locked' ? '' : '<button class="btn primary" data-act="arch.lock">Lock in profile</button>'}</div>
+    <p class="mute" style="margin:4px 0 12px">${P.source ? esc(P.source) + '. ' : ''}${P.status === 'locked' ? 'Every export is checked against this profile.' : 'archplan proposed this profile from the code. Edit anything that is wrong, then lock it in. After that, every export is checked against it.'}</p>`
+    : `<div class="callout"><b>${Q ? 'A proposed profile' : 'No architecture profile yet'}</b><p style="margin:4px 0">${Q ? 'archplan inferred this from recurring file names and folder shapes. Use it as a start, then edit it and lock it in.' : 'archplan can propose one from the code.'}</p>
+      <div class="row">${Q ? '<button class="btn primary" data-act="arch.use">Use this profile</button>' : ''}<button class="btn" data-act="arch.infer">${Q ? 'Propose again' : 'Propose a profile'}</button></div></div>
+      ${Q ? `<div class="doc-title">${esc(Q.name || '')}</div>${Q.source ? `<p class="mute">${esc(Q.source)}</p>` : ''}` : ''}`;
+  if (!X) return head;
+  return head + unitKindsHTML(X, ro) + rolesHTML(X, ro, an) + archRulesHTML(X, ro, an) + layersHTML(X, ro, an);
+}
+const unitKindsHTML = (X, ro) => `<div class="dsec"><h4>Units</h4><div class="chips" style="align-items:center">${(X.units || []).map((u, i) => `<span class="pill acc">${esc(u.kind)}</span><span class="mono mute" style="font-size:12.5px">${esc(u.glob)}${u.require ? ` · needs ${esc([].concat(u.require).join(', '))}` : ''}${u.exclude ? ` · not ${esc([].concat(u.exclude).join(', '))}` : ''}</span>${ro ? '' : `<button class="x" data-act="arch.unitdel" data-i="${i}" title="Remove this unit kind">×</button>`}`).join('<span class="mute">·</span>') || '<span class="mute">None.</span>'}</div>
+  ${ro ? '' : '<div class="row"><input id="au-kind" placeholder="Kind, e.g. System" style="width:150px"><input id="au-glob" class="mono" placeholder="Glob, e.g. core/systems/*" style="flex:1"><button class="btn" data-act="arch.unitadd">Add unit kind</button></div>'}
+  ${archUnits().length ? `<p class="mute" style="font-size:13px;margin:4px 0 0">${plural(archUnits().length, 'unit')} in the code.</p>` : ''}</div>`;
+function rolesHTML(X, ro, an) {
+  const cov = id => (an.roles || []).find(r => r.id === id);
+  const row = (r, i) => {
+    const c = cov(r.id), pct = c?.of ? Math.round(100 * c.present / c.of) : 0;
+    if (roleEdit === r.id && !ro) return `<div class="role edit"><input type="color" id="ar-color" value="${esc(draft('ar-color', roleColor(r, i)))}" title="Colour"><input id="ar-name" value="${esc(draft('ar-name', r.name))}" placeholder="Name">
+      <input id="ar-pat" class="mono" value="${esc(draft('ar-pat', (r.patterns || []).join(', ')))}" placeholder="File name patterns, e.g. _public.ex, *_view.ex">
+      <div class="row" style="grid-column:1/-1;margin:0"><button class="btn primary" data-act="arch.rolesave" data-i="${i}">Save</button><button class="btn" data-act="arch.rolecancel">Cancel</button><span class="spacer"></span><button class="btn" data-act="arch.roledel" data-i="${i}">Remove role</button></div></div>`;
+    return `<div class="role"${ro ? '' : ` data-act="arch.roleedit" data-id="${esc(r.id)}" title="Edit this role"`}><span class="sw" style="background:${esc(roleColor(r, i))}"></span><b>${esc(r.name)}</b><span class="mono mute">${esc((r.patterns || []).join(', '))}</span>
+      ${c ? `<span class="cov"><span class="bar"><i style="width:${pct}%"></i></span><span class="mute">${c.present} of ${c.of}</span></span>` : '<span></span>'}</div>`;
+  };
+  const um = an.unmatched, nU = Array.isArray(um) ? um.length : um || 0;
+  return `<div class="dsec"><h4 style="display:flex">Roles<span class="spacer"></span>${(an.roles || []).length ? '<span style="text-transform:none;letter-spacing:0;font-weight:400">present in</span>' : ''}</h4>
+    ${(X.roles || []).map(row).join('') || '<p class="mute">No roles.</p>'}
+    <div class="row" style="font-size:13px">${ro ? '' : '<button class="linkb" data-act="arch.roleadd">+ Role</button>'}${nU ? `<span class="mute">${nU === 1 ? '1 file matches' : nU + ' files match'} no role.</span>` : ''}</div></div>`;
+}
+function archRulesHTML(X, ro, an) {
+  const st = id => (an.rules || []).find(r => r.id === id);
+  return `<div class="dsec"><h4>Rules</h4>${(X.rules || []).map((r, ri) => {
+    const s = st(r.id), n = s?.count ?? null, open = ruleOpen === r.id && s?.breaks?.length;
+    return `<div class="arule${open ? ' open' : ''}" data-act="arch.rule" data-id="${esc(r.id)}"><span>${esc(s?.text || r.text || r.id)}</span><span class="spacer"></span>
+      ${n == null ? '' : n ? `<span class="pill rem">${plural(n, 'break')}</span>` : '<span class="pill add">holds</span>'}${ro ? '' : `<button class="x" data-act="arch.ruledel" data-i="${ri}" title="Remove this rule">×</button>`}</div>
+      ${open ? `<ul class="breaks">${s.breaks.slice(0, 200).map((b, i) => `<li><button class="linkb" data-act="arch.break" data-rule="${esc(r.id)}" data-i="${i}"><b>${esc(unitNameOf(b.unit))}</b>: ${esc(baseName(b.from))}${b.to ? ` → ${esc(baseName(b.to))}` : ''}</button>${b.detail ? ` <span class="mute">${esc(b.detail)}</span>` : ''}</li>`).join('')}
+        ${s.breaks.length > 200 ? `<li class="mute">… ${s.breaks.length - 200} more</li>` : ''}</ul>` : ''}`;
+  }).join('') || '<p class="mute">No rules.</p>'}
+    ${(an.warnings || []).length ? `<ul class="breaks">${an.warnings.map(w => `<li class="mute">${esc(typeof w === 'string' ? w : w.text || w.message || JSON.stringify(w))}</li>`).join('')}</ul>` : ''}
+    ${ro ? '' : '<p class="mute" style="font-size:13px;margin:6px 0 0">Click a rule to list its breaks. To add a rule, write it as a sentence in a comment; Claude turns it into a rule.</p>'}</div>`;
+}
+function layersHTML(X, ro, an) {
+  const L = X.layers || [], un = an.layers?.unassigned || [];
+  const chip = (c, inLayer) => `<span class="chip lchip"${ro ? '' : ` draggable="true" data-lcomp="${esc(c)}" title="Drag to another layer"`}>${esc(cname(toBe, c))}${ro || !inLayer ? '' : `<button data-act="arch.unassign" data-c="${esc(c)}" title="Remove from this layer">×</button>`}</span>`;
+  return `<div class="dsec"><h4>Layers</h4>${L.length ? '<p class="mute" style="font-size:13px;margin:0 0 6px">From top to bottom. A layer may use the layers below it.</p>' : '<p class="mute">No layers.</p>'}
+    ${L.map((l, i) => `<div class="layer" data-layer="${i}"><div class="lh2"><b>${esc(l.name)}</b><span class="mute">${(l.components || []).length}</span></div><div class="chips">${(l.components || []).map(c => chip(c, true)).join('') || '<span class="mute" style="font-size:13px">Empty. Drop a component here.</span>'}</div></div>`).join('<div class="mute" style="text-align:center;line-height:1.1">↓</div>')}
+    ${un.length ? `<div class="layer un" data-layer="-1"><div class="lh2"><span class="pill rem">${un.length} unassigned</span></div><div class="chips">${un.map(c => chip(c, false)).join('')}</div>
+      ${ro || !L.length ? '' : `<div class="row"><select id="al-comp">${opts(un.map(c => [c, cname(toBe, c)]))}</select><span class="mute">to</span><select id="al-layer">${opts(L.map((l, i) => [String(i), l.name]))}</select><button class="btn" data-act="arch.assign">Assign</button></div>`}</div>` : ''}</div>`;
+}
+const moveToLayer = (c, li) => editProfile(p => { p.layers.forEach(l => l.components = (l.components || []).filter(x => x !== c)); if (li >= 0) (p.layers[li].components ||= []).push(c); });
+// Drag a component chip between layers.
+$('panel').addEventListener('dragstart', e => { const c = e.target.closest?.('[data-lcomp]'); if (!c) return; drag = {kind: 'layer', id: c.dataset.lcomp}; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', drag.id); });
+$('panel').addEventListener('dragover', e => { if (drag?.kind !== 'layer') return; const l = e.target.closest('[data-layer]'); if (!l) return; e.preventDefault(); dropMarks(); l.classList.add('over'); });
+$('panel').addEventListener('drop', e => { if (drag?.kind !== 'layer') return; e.preventDefault(); const d = drag; drag = null; dropMarks(); const l = e.target.closest('[data-layer]'); if (l) moveToLayer(d.id, +l.dataset.layer); });
+
+// A file of a unit, opened from the Roles view.
+function filePage() {
+  const p = sel.id, u = unitById(sel.unit) || unitOfFile(p), f = u?.files.find(x => x.path === p), r = f?.role ? roleOf(f.role) : null;
+  const ts = Object.entries(toBe.types).filter(([, t]) => samePath((t.file || '').split(':')[0], p));
+  const imp = f?.imported_by || f?.importers || null, uses = f?.imports || null;
+  const bs = archAn().rules?.flatMap(x => (x.breaks || []).filter(b => b.from === p || b.to === p).map(b => ({...b, text: x.text}))) || [];
+  const flist = l => `<ul class="members">${l.slice(0, 40).map(x => `<li class="mono" style="font-size:12.5px">${esc(x)}</li>`).join('') || '<li class="mute">none</li>'}${l.length > 40 ? `<li class="mute">… ${l.length - 40} more</li>` : ''}</ul>`;
+  return `<div class="ins-h"><span class="kind">file</span><b>${esc(baseName(p))}</b></div><div class="anchor mono">📍 ${esc(p)}</div>
+    <p>${r ? `<span class="sw" style="background:${esc(roleColor(r, (archProfile().roles || []).indexOf(r)))}"></span> Role <b>${esc(r.name)}</b>` : '<span class="pill warn">matches no role</span>'}${u ? ` in <a class="linkb" data-act="arch.unit" data-id="${esc(u.id)}">${esc(unitName(u))}</a> <span class="mute">(${esc(u.kind)})</span>` : ''}</p>
+    <h4>Types in this file</h4><ul class="members">${ts.map(([k, t]) => `<li><a class="linkb" data-act="thread.goto" data-key="type:${esc(k)}"><span class="kind">${esc(t.kind)}</span> ${esc(t.name)}</a></li>`).join('') || '<li class="mute">none in the model</li>'}</ul>
+    ${imp ? `<h4>Imported by</h4>${flist(imp)}` : ''}${uses ? `<h4>Imports</h4>${flist(uses)}` : ''}
+    <h4>Rule breaks</h4>${bs.length ? `<ul class="members">${bs.map(b => `<li><span>${esc(b.text)}<br><span class="mute mono" style="font-size:12px">${esc(baseName(b.from))} → ${esc(baseName(b.to || ''))}</span>${b.detail ? `<br><span class="mute">${esc(b.detail)}</span>` : ''}</span></li>`).join('')}</ul>` : '<p class="mute">None.</p>'}
+    ${noteBox('file:' + p)}`;
+}
+// On the page of a component that is a unit.
+function unitBox(c) {
+  const u = unitOfComp(c); if (!u) return '';
+  const P = archProfile(), n = unitBreaks(u.id).length, has = new Set(u.roles || (u.files || []).map(f => f.role).filter(Boolean));
+  return `<h4>Roles <span class="mute" style="text-transform:none;font-weight:400;letter-spacing:0">${esc(u.kind)}${conf(u)}</span></h4>
+    <div class="chips">${(P?.roles || []).map((r, i) => `<span class="rchip${has.has(r.id) ? '' : ' miss'}" title="${has.has(r.id) ? 'Present' : 'Missing'}"><i style="background:${esc(roleColor(r, i))}"></i>${esc(r.name)}</span>`).join('')}</div>
+    <div class="row">${n ? `<span class="pill rem">${plural(n, 'rule break')}</span>` : '<span class="pill add">no rule breaks</span>'}<button class="btn" data-act="arch.unit" data-id="${esc(u.id)}">Show roles</button></div>`;
+}
+function showUnit(id, hi) {
+  view = 'roles'; unitSel = id; archHi = hi || null; RVP.u = null;
+  if (unitCmp === id) unitCmp = '';
+  render();
+}
+
+// The Roles view: one unit (and maybe a second to compare) with its files in lanes per role.
+function renderRoles() {
+  const el = $('roles'), P = archProfile();
+  const us = [unitById(unitSel), unitById(unitCmp)].filter((u, i, a) => u && a.indexOf(u) === i);
+  $('unitSel').innerHTML = opts(archUnits().map(u => [u.id, `${u.kind ? u.kind + ': ' : ''}${unitName(u)}`]).sort((a, b) => a[1].localeCompare(b[1])), unitSel);
+  $('cmpSel').innerHTML = opts([['', 'Compare with…'], ...archUnits().filter(u => u.id !== unitSel).map(u => [u.id, `Compare with ${unitName(u)}`]).sort((a, b) => a[1].localeCompare(b[1]))], unitCmp);
+  if (!P || !us.length) { rolesDims = {W: 0, H: 0}; el.innerHTML = `<div class="rempty">${!P ? 'No architecture profile yet.' : 'No units in the code match the profile.'}</div>`; return zoomReadout(); }
+  const pos = {}; let y = 10, W = 0, s = '';
+  for (const u of us) { const r = unitSVG(u, 10, y, P, pos); s += r.s; y += r.h + 46; W = Math.max(W, r.w + 20); }
+  s += breaksSVG(us, pos);
+  rolesDims = {W, H: y - 36};
+  el.innerHTML = `<svg width="100%" height="100%" style="display:block" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"><defs><marker id="rArr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="#dc2626"/></marker></defs><g id="rolesRoot" transform="${rTf()}">${s}</g></svg>`;
+  const key = us.map(u => u.id).join('|') + (archHi ? '#' + archHi.from + '>' + archHi.to : '');
+  if (RVP.u !== key) {
+    RVP.u = key; navFit();
+    const b = archHi && pos[archHi.from];
+    if (b) { const z = Math.max(RVP.z, 1), cw = el.clientWidth, ch = el.clientHeight; NAV.roles.set(z, cw / 2 - (b.x + b.w / 2) * z, ch / 2 - (b.y + b.h / 2) * z); }
+  }
+  zoomReadout();
+}
+function unitSVG(u, x0, y0, P, pos) {
+  const LW = 176, BH = 26, G = 8, HH = 32, files = u.files || [];
+  const lanes = (P.roles || []).map((r, i) => ({id: r.id, name: r.name, color: roleColor(r, i), pat: (r.patterns || [])[0] || r.id, files: files.filter(f => f.role === r.id)}));
+  const none = files.filter(f => !f.role || !lanes.some(l => l.id === f.role));
+  const maxN = Math.max(6, ...lanes.map(l => l.files.length));
+  // Unmatched files wrap into columns as tall as the longest role lane.
+  for (let i = 0; i < none.length; i += maxN) lanes.push({id: '', name: i ? '' : 'No role', color: '#94a3b8', files: none.slice(i, i + maxN), cont: i > 0});
+  const h = 40 + HH + maxN * (BH + G) + 4;
+  let s = `<text x="${x0}" y="${y0 + 14}" font-size="15" font-weight="600" fill="#0f172a">${esc(unitName(u))}</text><text x="${x0}" y="${y0 + 31}" font-size="12.5" fill="#64748b">${esc([u.kind, u.path].filter(Boolean).join(' · '))}${esc(conf(u))}</text>`;
+  lanes.forEach((l, i) => {
+    const x = x0 + i * (LW + 10), y = y0 + 40;
+    s += `<rect x="${x}" y="${y}" width="${LW}" height="${h - 40}" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>${l.cont ? '' : `<rect x="${x + 10}" y="${y + 11}" width="10" height="10" rx="2" fill="${esc(l.color)}"/>`}<text x="${x + 26}" y="${y + 20}" font-size="13" font-weight="600" fill="#334155">${esc(trunc(l.name, 19))}</text>`;
+    if (!l.files.length && l.id) s += `<rect x="${x + 8}" y="${y + HH}" width="${LW - 16}" height="${BH}" rx="5" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="${x + 14}" y="${y + HH + 17}" font-size="12" font-style="italic" fill="#64748b">${esc(trunc('no ' + l.pat.replace(/^\*/, ''), 23))}</text>`;
+    l.files.forEach((f, j) => {
+      const by = y + HH + j * (BH + G), on = sel?.kind === 'file' && sel.id === f.path, hi = archHi && (archHi.from === f.path || archHi.to === f.path);
+      pos[f.path] = {x: x + 8, y: by, w: LW - 16, h: BH, u: u.id};
+      s += `<g data-file="${esc(f.path)}" data-unit="${esc(u.id)}" style="cursor:pointer"><title>${esc(f.path)}</title><rect x="${x + 8}" y="${by}" width="${LW - 16}" height="${BH}" rx="5" fill="${hi ? '#fef2f2' : '#fff'}" stroke="${on ? '#2563eb' : hi ? '#dc2626' : '#cbd5e1'}" stroke-width="${on || hi ? 2 : 1}"/><rect x="${x + 8}" y="${by}" width="4" height="${BH}" rx="2" fill="${esc(l.color)}"/><text x="${x + 18}" y="${by + 17}" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#0f172a">${esc(trunc(baseName(f.path), 20))}</text></g>`;
+    });
+  });
+  return {s, h, w: lanes.length * (LW + 10)};
+}
+// Rule breaks: a red dashed line between two drawn files, else a red stub
+// labelled with the unit (or file) it points to.
+function breaksSVG(us, pos) {
+  let s = '';
+  const stubs = {};
+  const seen = new Set(), ins = {};
+  for (const u of us) for (const b of unitBreaks(u.id)) {
+    const key = b.rule + '|' + b.from + '|' + b.to; if (seen.has(key)) continue; seen.add(key);
+    const a = pos[b.from], t = b.to && pos[b.to];
+    if (!a) {
+      if (!t) continue;
+      const k = ins[b.to] = (ins[b.to] || 0) + 1; if (k > 3) continue;
+      const fu = unitOfFile(b.from), label = trunc(k === 3 ? 'more…' : (fu ? unitName(fu) : baseName(b.from)) + ' →', 20), lw = label.length * 6.2 + 8;
+      const ex = t.x, ey = t.y + 4 + (k - 1) * 9, hi = archHi && archHi.from === b.from && archHi.to === b.to;
+      s += `<g><title>${esc(b.text)}: ${esc(b.from)}${b.detail ? ' (' + esc(b.detail) + ')' : ''}</title><path d="M${ex - 16},${ey} h16" stroke="#dc2626" stroke-width="${hi ? 2.6 : 1.5}" stroke-dasharray="4 3"/><rect x="${ex - 16 - lw}" y="${ey - 7}" width="${lw}" height="14" rx="3" fill="#fff" stroke="#fca5a5"/><text x="${ex - 12 - lw}" y="${ey + 3.5}" font-size="10.5" fill="#b91c1c">${esc(label)}</text></g>`;
+      continue;
+    }
+    const hi = archHi && archHi.from === b.from && archHi.to === b.to, w = hi ? 2.6 : 1.5;
+    if (t) {
+      const ya = a.y + a.h / 2, yt = t.y + t.h / 2;
+      const [sx, ex] = a.x < t.x ? [a.x + a.w, t.x] : a.x > t.x ? [a.x, t.x + t.w] : [a.x + a.w, t.x + t.w];
+      const dx = a.x === t.x ? 46 : (ex - sx) / 2;
+      s += `<path d="M${sx},${ya} C${sx + dx},${ya} ${ex - dx},${yt} ${ex},${yt}" fill="none" stroke="#dc2626" stroke-width="${w}" stroke-dasharray="5 4" marker-end="url(#rArr)"><title>${esc(b.text)}${b.detail ? ': ' + esc(b.detail) : ''}</title></path>`;
+    } else {
+      const k = stubs[b.from] = (stubs[b.from] || 0) + 1;
+      if (k > 3) continue;
+      const tu = b.to ? unitOfFile(b.to) : null, label = trunc(k === 3 ? 'more…' : tu && tu.id !== u.id ? '→ ' + unitName(tu) : '→ ' + baseName(b.to || b.detail || '?'), 20);
+      const sx = a.x + a.w, sy = a.y + 4 + (k - 1) * 9, lw = label.length * 6.2 + 8;
+      s += `<g><title>${esc(b.text)}: ${esc(b.to || '')}${b.detail ? ' (' + esc(b.detail) + ')' : ''}</title><path d="M${sx},${sy} h16" stroke="#dc2626" stroke-width="${w}" stroke-dasharray="4 3"/><rect x="${sx + 16}" y="${sy - 7}" width="${lw}" height="14" rx="3" fill="#fff" stroke="#fca5a5"/><text x="${sx + 20}" y="${sy + 3.5}" font-size="10.5" fill="#b91c1c">${esc(label)}</text></g>`;
+    }
+  }
+  return s;
+}
+NAV.roles = {el: () => $('roles'), get: () => RVP, box: () => rolesDims.W ? {x1: 0, y1: 0, w: rolesDims.W, h: rolesDims.H} : null,
+  set: (z, x, y) => { Object.assign(RVP, {z, x, y}); $('rolesRoot')?.setAttribute('transform', rTf()); zoomReadout(); }};
+$('roles').addEventListener('mousedown', ev => { if (ev.button === 0 && !ev.target.closest('[data-file]')) navDrag(ev); });
+$('roles').addEventListener('click', ev => {
+  if (suppressClick) return;
+  const g = ev.target.closest('[data-file]'); if (g) select({kind: 'file', id: g.dataset.file, unit: g.dataset.unit});
+});
+$('roles').addEventListener('dblclick', e => { if (!e.target.closest('[data-file]')) navFit(); });
+$('unitSel').addEventListener('change', e => showUnit(e.target.value));
+$('cmpSel').addEventListener('change', e => { unitCmp = e.target.value; RVP.u = null; render(); });
+const rulesUsing = (p, id) => (p.rules || []).filter(r => ['from', 'to', 'allow', 'role', 'needs'].some(k => [].concat(r[k] ?? []).includes(id)));
+Object.assign(actions, {
+  'arch.lock': () => archCall('POST', '/api/architecture/lock', undefined, 'lock in the profile'),
+  'arch.use': () => archCall('PUT', '/api/architecture', {profile: ARCH.proposal}, 'save the profile'),
+  'arch.infer': async () => {
+    toast('Proposing a profile from the code…');
+    try { const r = await api('POST', '/api/architecture/infer'); if (r && r.saved === false) toast('The profile is locked, so the new proposal was not saved.'); }
+    catch (err) { toast(`Could not propose a profile: ${err.message}`); }
+    await loadArch();
+  },
+  'arch.unitadd': () => { const kind = val('au-kind'), glob = val('au-glob'); if (!kind || !glob) return; $('au-kind').value = $('au-glob').value = ''; editProfile(p => (p.units ||= []).push({kind, glob})); },
+  'arch.unitdel': e => editProfile(p => p.units.splice(+e.dataset.i, 1)),
+  'arch.roleedit': e => { roleEdit = e.dataset.id; clearDrafts('ar-'); renderSide(); $('ar-name')?.focus(); },
+  'arch.rolecancel': () => { roleEdit = null; clearDrafts('ar-'); renderSide(); },
+  'arch.rolesave': e => {
+    const name = val('ar-name'); if (!name) return $('ar-name').focus();
+    const patterns = val('ar-pat').split(',').map(x => x.trim()).filter(Boolean), color = $('ar-color').value;
+    roleEdit = null; clearDrafts('ar-');
+    editProfile(p => {
+      const r = p.roles[+e.dataset.i], slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      if (/^role(-\d+)?$/.test(r.id) && slug && !rulesUsing(p, r.id).length && !p.roles.some(x => x.id === slug)) r.id = slug;
+      Object.assign(r, {name, patterns, color});
+    });
+  },
+  'arch.roledel': e => {
+    const p = ARCH.profile, r = p.roles[+e.dataset.i], used = rulesUsing(p, r.id);
+    if (used.length) return toast(`Remove the rule${used.length > 1 ? 's' : ''} that name ${r.name} first: ${used.map(x => (archAn().rules || []).find(a => a.id === x.id)?.text || x.text || x.id).join('; ')}`);
+    roleEdit = null; clearDrafts('ar-'); editProfile(p => p.roles.splice(+e.dataset.i, 1));
+  },
+  'arch.roleadd': () => {
+    const rs = ARCH.profile.roles || [], used = new Set(rs.map(r => r.id));
+    let id = 'role', i = 2; while (used.has(id)) id = 'role-' + i++;
+    roleEdit = id; clearDrafts('ar-');
+    editProfile(p => (p.roles ||= []).push({id, name: 'New role', patterns: [], color: ROLE_COLORS[rs.length % ROLE_COLORS.length], description: ''}));
+  },
+  'arch.rule': e => { ruleOpen = ruleOpen === e.dataset.id ? null : e.dataset.id; renderSide(); },
+  'arch.ruledel': e => { if (confirm('Remove this rule from the profile?')) editProfile(p => p.rules.splice(+e.dataset.i, 1)); },
+  'arch.break': e => { const b = (archAn().rules || []).find(r => r.id === e.dataset.rule)?.breaks?.[+e.dataset.i]; if (!b) return;
+    const fu = unitOfFile(b.from)?.id || b.unit, tu = b.to && unitOfFile(b.to)?.id;
+    showUnit(fu, {from: b.from, to: b.to}); if (tu && tu !== fu) { unitCmp = tu; render(); } },
+  'arch.unit': e => showUnit(e.dataset.id),
+  'arch.unassign': e => moveToLayer(e.dataset.c, -1),
+  'arch.assign': () => { const c = val('al-comp'); if (c) moveToLayer(c, +val('al-layer')); },
 });
 $('panel').addEventListener('click', e => {
   const mn = e.target.closest('.mention'); if (mn) { e.preventDefault(); return gotoMention(mn.dataset.anchor); }
@@ -3074,14 +3368,14 @@ function verifyHTML() {
 // ---------- the left column: the plan as a document, and item pages ----------
 const openSecs = new Set(JSON.parse(localStorage.getItem('archplan.openSecs') || '[]'));
 const crumb = (...parts) => `<div class="crumb"><a data-act="page.plan">Plan</a>${parts.map(p => ' › ' + p).join('')}</div>`;
-const SEC_OF = {type: 'Types', comp: 'Components', concept: 'Glossary', tedge: 'Types', cedge: 'Components', msg: 'Sequences', leak: 'Glossary'};
+const SEC_OF = {file: 'Roles', type: 'Types', comp: 'Components', concept: 'Glossary', tedge: 'Types', cedge: 'Components', msg: 'Sequences', leak: 'Glossary'};
 function itemPage() {
   const body = inspector();
   if (multi.length) return crumb('Selection') + body;
   if (sel.kind === 'pair') return body;
   const sec = sel.kind === 'comp' && view === 'glossary' ? 'Glossary' : SEC_OF[sel.kind] || '';
   const label = anchorLabel(anchorOf(sel)).replace(/^component /, '');
-  return `<div class="crumb" style="display:flex;gap:6px"><span><a data-act="page.plan">Plan</a> › ${esc(sec)} › <span style="color:var(--ink)">${esc(label)}</span></span><span class="spacer"></span><button class="linkb" data-act="page.comment">Comment</button></div>` + body;
+  return `<div class="crumb" style="display:flex;gap:6px"><span><a data-act="page.plan">${page === 'arch' || (leftMode === 'arch' && ARCH) ? 'Architecture' : 'Plan'}</a> › ${esc(sec)} › <span style="color:var(--ink)">${esc(label)}</span></span><span class="spacer"></span><button class="linkb" data-act="page.comment">Comment</button></div>` + body;
 }
 const intentTitle = () => { const s = (intent || '').trim().split('\n')[0], m = /^(.{8,}?[.!?])(\s|$)/.exec(s); const t = m ? m[1] : s; return t.length > 90 ? t.slice(0, 88) + '…' : t; };
 // Threads per plan task (open ones) and the threads that belong to no task.
@@ -3153,8 +3447,9 @@ function planText(P) {
   return `<div class="row"><div class="seg">${f('md')}${f('json')}</div><div class="spacer"></div><button class="btn" data-act="plan.copy">Copy</button><button class="btn" data-act="plan.download">Download</button></div>
     ${openSecs.has('text') ? `<pre class="raw mono">${esc(planFmtRaw === 'json' ? planJSON(P) : planMD(P))}</pre>` : ''}`;
 }
-function toPlan() { if (sel || multi.length || page !== 'plan') { sel = null; multi = []; page = 'plan'; if (view === 'seq') renderSeq(); else applySel(); renderSide(); } }
+function toPlan() { if (sel || multi.length || page !== homePage()) { sel = null; multi = []; page = homePage(); if (view === 'seq') renderSeq(); else applySel(); renderSide(); } }
 function gotoSec(id) {
+  if (leftMode === 'arch') { leftMode = 'plan'; localStorage.setItem('archplan.left', 'plan'); }
   toPlan();
   const el = $('sec-' + id); if (!el) return;
   const d = el.querySelector('details'); if (d && !d.open) d.open = true;
@@ -3177,7 +3472,7 @@ function renderSide() {
   const keep = [...$('panel').querySelectorAll('textarea[id], input[id]')].map(x => [x.id, x.value, x === document.activeElement, x.selectionStart]);
   const top = $('panel').scrollTop, was = $('panel').dataset.page;
   const cur = multi.length || sel ? 'item:' + (multi.join('|') || anchorOf(sel)) : page;
-  $('panel').innerHTML = multi.length || sel ? itemPage() : page === 'model' ? modelPage() : page === 'seq' ? seqPage() : page === 'glossary' ? glossPage() : planDoc();
+  $('panel').innerHTML = multi.length || sel ? itemPage() : page === 'arch' && ARCH ? archPage() : page === 'model' ? modelPage() : page === 'seq' ? seqPage() : page === 'glossary' ? glossPage() : planDoc();
   $('panel').dataset.page = cur;
   if (cur === was) $('panel').scrollTop = top; else $('panel').scrollTop = 0;
   for (const [id, v, foc, pos] of keep) { const x = $(id); if (!x || (x.value && x.value !== v)) continue; x.value = v; if (foc) { x.focus(); try { x.setSelectionRange(pos, pos); } catch {} } }
@@ -3190,6 +3485,7 @@ function legend() {
   const v = view === 'types' ? '<span>◆→ has (field)</span><span>- -▷ implements</span><span>··› uses</span><span>~ / + / − member diff</span><span>faded = context outside the focus</span>'
     : view === 'components' ? layers() + '<span style="color:#dc2626">⊘ not allowed by policy</span><span>edge label = importing files or type references</span>'
       + (!focus.size && Object.keys(toBe.components).length > BIG_COMPS ? '<span><b>Large model:</b> only changed, violating and selected edges are drawn. Double-click a component to focus it.</span>' : '')
+    : view === 'roles' ? '<span>lane = role, box = file</span><span>dashed box = role missing in this unit</span><span style="color:#dc2626">╍▶ rule break</span><span style="color:#dc2626">╍ → name: break to another unit</span>'
     : view === 'glossary' ? '<span>box = owner component</span><span>tag = concept (grey: vendor)</span><span>→ n× = term occurrences</span><span>··› declared uses / avoid</span><span style="color:#dc2626">⚑ red = leak</span>'
     : '<span>━▶ sync call</span><span>╍▷ async</span><span>▯ active</span><span>💬 review note</span>';
   $('legend').innerHTML = d + v;
@@ -3209,7 +3505,7 @@ function renderFocus() {
     + (focus.size ? '<button class="x" data-unfocus="*" title="Clear focus">clear</button>' : '');
   $('extChk').checked = showExternal;
   $('leafChk').checked = hideLeaves;
-  $('focusBox').style.display = view === 'seq' ? 'none' : '';
+  $('focusBox').style.display = view === 'seq' || view === 'roles' ? 'none' : '';
   const seqs = Object.entries({...asIs.sequences, ...toBe.sequences});
   if (seqFilter && !seqs.some(([k]) => k === seqFilter)) seqFilter = '';
   $('seqFilter').style.display = seqs.length ? '' : 'none';
@@ -3226,7 +3522,7 @@ $('glossMode').addEventListener('change', e => { glossMode = e.target.value; pos
 $('seqFilter').addEventListener('change', e => { seqFilter = e.target.value; viewports = {}; positions = {components: {}, types: {}, glossary: {}}; sel = null; render(true); });
 $('extChk').addEventListener('change', e => { showExternal = e.target.checked; positions.components = {}; render(true); });
 $('leafChk').addEventListener('change', e => { hideLeaves = e.target.checked; localStorage.setItem('archplan.hideLeaves', hideLeaves ? '1' : '0'); positions.components = {}; positions.types = {}; render(true); });
-cy.on('dbltap', 'node.cmp, node.par', e => { setFocus([e.target.data('sid')], e.originalEvent?.shiftKey); });
+cy.on('dbltap', 'node.cmp, node.par', e => { const u = !e.originalEvent?.shiftKey && unitOfComp(e.target.data('sid')); if (u) return showUnit(u.id); setFocus([e.target.data('sid')], e.originalEvent?.shiftKey); });
 
 // ---------- archmodel/1 files ----------
 function fromArchModel(j) {
@@ -3275,7 +3571,7 @@ function loadModel(j, name) {
   focus = new Set(); showExternal = false; seqFilter = ''; undoStack = []; sel = null; verifyStage = 0;
   positions = {components: {}, types: {}, glossary: {}}; viewports = {};
   curSeq = Object.keys(toBe.sequences)[0] || '';
-  view = Object.keys(toBe.types).length > BIG_TYPES ? 'components' : 'types'; mode = 'diff'; page = 'plan';
+  view = Object.keys(toBe.types).length > BIG_TYPES ? 'components' : 'types'; mode = 'diff'; page = homePage();
   $('hint').style.display = 'none';
   render(true);
 }
@@ -3675,10 +3971,11 @@ setInterval(renderAgent, 30000);
 // ---------- overlays: git history and fan-in/out on the component view ----------
 const HOT = {state: 'idle', why: '', d: null}, OV = {max: 0, pairs: 0};
 let overlay = localStorage.getItem('archplan.overlay') || 'none';
-const OVERLAYS = [['none', 'None'], ['churn', 'Change frequency'], ['cochange', 'Co-change'], ['fanin', 'Fan-in'], ['fanout', 'Fan-out']];
+const OVERLAYS = [['none', 'None'], ['churn', 'Change frequency'], ['cochange', 'Co-change'], ['fanin', 'Fan-in'], ['fanout', 'Fan-out'], ['conformance', 'Conformance']];
+const CONF = [['#bbf7d0', '90% or more'], ['#fde68a', '70 to 90%'], ['#fecaca', 'below 70%']], confColor = c => c == null ? RAMP[0] : CONF[c >= .9 ? 0 : c >= .7 ? 1 : 2][0];
 const RAMP = ['#f1f5f9', '#fef9c3', '#fde68a', '#fdba74', '#fb923c', '#f87171'];
 const ovNeedsGit = o => o === 'churn' || o === 'cochange';
-const ovOn = () => view === 'components' && overlay !== 'none' && !(ovNeedsGit(overlay) && HOT.state !== 'ok');
+const ovOn = () => view === 'components' && overlay !== 'none' && !(ovNeedsGit(overlay) && HOT.state !== 'ok') && !(overlay === 'conformance' && !archUnits().length);
 const heat = (v, max) => !v || !max ? RAMP[0] : RAMP[Math.min(5, 1 + Math.floor(Math.log(1 + v) / Math.log(1 + max) * 4.999))];
 async function loadHotspots() {
   if (!collab) { HOT.state = 'err'; HOT.why = 'Needs git: open a project with archplan up.'; return renderOverlayUI(); }
@@ -3710,6 +4007,7 @@ function addCochange() {
 function applyOverlay() {
   OV.max = 0;
   if (!ovOn() || overlay === 'cochange') return;
+  if (overlay === 'conformance') return cy.nodes('.cmp').forEach(n => n.data('bg', confColor(unitOfComp(n.data('sid'))?.conformance)));
   let f;
   if (overlay === 'churn') f = id => HOT.d.components?.[id]?.commits || 0;
   else {
@@ -3722,7 +4020,7 @@ function applyOverlay() {
   nodes.forEach(n => n.data('bg', heat(f(n.data('sid')), OV.max)));
 }
 function renderOverlayUI() {
-  const why = o => !ovNeedsGit(o) || HOT.state === 'ok' ? '' : HOT.state === 'err' ? HOT.why : 'Reading the git history…';
+  const why = o => o === 'conformance' ? (archUnits().length ? '' : 'Needs an architecture profile.') : !ovNeedsGit(o) || HOT.state === 'ok' ? '' : HOT.state === 'err' ? HOT.why : 'Reading the git history…';
   $('ovMenu').innerHTML = OVERLAYS.map(([k, l]) => { const w = why(k); return `<button class="mi ${overlay === k ? 'on' : 'off'}" data-ov="${k}"${w ? ' disabled' : ''}><span>${l}${w ? `<span class="why">${esc(w)}</span>` : ''}</span></button>`; }).join('')
     + (view !== 'components' ? '<div class="sep"></div><div class="mute" style="padding:4px 9px;font-size:13px">Overlays show in the Components view.</div>' : '');
   $('ovBtn').textContent = overlay === 'none' ? 'Overlay ▾' : `Overlay: ${OVERLAYS.find(o => o[0] === overlay)?.[1].toLowerCase()} ▾`;
@@ -3731,7 +4029,9 @@ function renderOverlayUI() {
   el.hidden = !ovOn() || $('cy').style.visibility === 'hidden';
   if (el.hidden) return;
   const line = (w, o) => `<svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#7c3aed" stroke-dasharray="5 3" stroke-width="${w}" opacity="${o}"/></svg>`;
-  el.innerHTML = overlay === 'cochange'
+  el.innerHTML = overlay === 'conformance'
+    ? `<b>Conformance</b> to the architecture profile<br>${CONF.map(([c, l]) => `<span style="margin-right:8px"><i style="background:${c}"></i>${l}</span>`).join('')}<br><span><i style="background:${RAMP[0]}"></i>not a unit</span>`
+    : overlay === 'cochange'
     ? `<b>Co-change</b>, last ${HOT.d.since_days} days<br>${line(1.5, .6)} changed in the same commits (n×)<br>${line(4, 1)} no import between them: hidden coupling<br>${plural(OV.pairs, 'pair')} drawn. Click a line for details.`
     : `<b>${{churn: 'Change frequency', fanin: 'Fan-in', fanout: 'Fan-out'}[overlay]}</b>: ${{churn: `commits in the last ${HOT.d?.since_days} days`, fanin: 'components that use it', fanout: 'components it uses'}[overlay]}
       <div class="ramp" style="background:linear-gradient(90deg,${RAMP.join(',')})"></div><div style="display:flex"><span>0</span><span class="spacer"></span><span>${OV.max}</span></div>
@@ -3759,7 +4059,7 @@ function viewLink() {
 function applyHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   if (!p.has('view')) return;
-  if (['components', 'types', 'seq', 'glossary'].includes(p.get('view'))) view = p.get('view');
+  if (['components', 'types', 'seq', 'glossary', 'roles'].includes(p.get('view'))) view = p.get('view');
   if (['asis', 'tobe', 'diff'].includes(p.get('mode'))) mode = p.get('mode');
   if (p.get('focus')) setFocusIds(p.get('focus').split(','));
   if (p.get('sel')) sel = selOf(p.get('sel'));
@@ -3830,7 +4130,8 @@ function palClose() { $('palette').hidden = true; }
 function palUpdate() {
   const q = $('palIn').value.trim().toLowerCase(), items = [];
   const it = (k, label, run, r) => items.push({k, label, run, r});
-  [['components', 'Components'], ['types', 'Types'], ['seq', 'Sequences'], ['glossary', 'Glossary']].forEach(([v, l]) => it('view', `${l} view`, () => { view = v; sel = null; render(); }));
+  [['components', 'Components'], ...(ARCH ? [['roles', 'Roles']] : []), ['types', 'Types'], ['seq', 'Sequences'], ['glossary', 'Glossary']].forEach(([v, l]) => it('view', `${l} view`, () => { view = v; sel = null; render(); }));
+  if (ARCH) { it('plan', 'Architecture profile', () => setLeft('arch')); for (const u of archUnits()) it('unit', `${unitName(u)} roles`, () => showUnit(u.id), u.path); }
   [['asis', 'As-is'], ['tobe', 'To-be'], ['diff', 'Diff']].forEach(([m, l]) => it('mode', l, () => { mode = m; render(); }));
   it('view', hideLeaves ? 'Show leaves' : 'Hide leaves', () => setLeaves(!hideLeaves));
   it('view', showExternal ? 'Hide external libraries' : 'Show external libraries', () => { showExternal = !showExternal; positions.components = {}; render(true); });
@@ -3870,6 +4171,8 @@ function renderHeader() {
   const n = pending().length;
   $('sugPill').hidden = !n;
   $('sendBtn').hidden = !todo().length || !!hoActive();
+  $('leftModes').hidden = $('rolesBtn').hidden = !ARCH;
+  document.querySelectorAll('#leftModes button').forEach(b => b.classList.toggle('on', b.dataset.left === (ARCH ? leftMode : 'plan')));
   $('sugPill').innerHTML = `<span class="dot warn"></span>${plural(n, 'suggestion')} to review`;
   $('suggMode').hidden = !n;
   if (mode === 'sugg' && !n) mode = 'diff';
@@ -3907,7 +4210,10 @@ function render(forceLayout) {
   renderHeader();
   document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
   $('seqSel').style.display = $('seqInfo').style.display = view === 'seq' ? '' : 'none';
-  $('focusBox').style.display = $('viewBtn').parentNode.style.display = view === 'seq' ? 'none' : '';
+  $('focusBox').style.display = $('viewBtn').parentNode.style.display = view === 'seq' || view === 'roles' ? 'none' : '';
+  $('modes').style.display = view === 'roles' ? 'none' : '';
+  $('unitSel').style.display = $('cmpSel').style.display = view === 'roles' ? '' : 'none';
+  $('ovBtn').parentNode.style.display = view === 'roles' ? 'none' : '';
   $('leafOpt').style.display = view === 'glossary' || view === 'seq' ? 'none' : '';
   $('extOpt').style.display = view === 'components' ? '' : 'none';
   $('glossBox').style.display = view === 'glossary' ? '' : 'none';
@@ -3917,12 +4223,13 @@ function render(forceLayout) {
   $('undoBtn').disabled = !undoStack.length;
   const glossTable = view === 'glossary' && (glossMode === 'table' || (!hasVocab(asIs) && !hasVocab(toBe)));
   $('glossMode').value = glossMode;
-  $('cy').style.visibility = view === 'seq' || glossTable ? 'hidden' : 'visible';
+  $('cy').style.visibility = view === 'seq' || view === 'roles' || glossTable ? 'hidden' : 'visible';
   $('seq').style.display = view === 'seq' ? '' : 'none';
+  $('roles').style.display = view === 'roles' ? '' : 'none';
   $('gloss').style.display = glossTable ? 'block' : 'none';
   closePop(); hideEdgeAct();
-  if (view === 'seq' || glossTable) $('emptyMsg').hidden = true;
-  if (view === 'seq') renderSeq(); else if (glossTable) renderGloss(); else renderCy(forceLayout);
+  if (view === 'seq' || view === 'roles' || glossTable) $('emptyMsg').hidden = true;
+  if (view === 'seq') renderSeq(); else if (view === 'roles') renderRoles(); else if (glossTable) renderGloss(); else renderCy(forceLayout);
   legend(); renderCanvasBar(); renderOverlayUI(); renderViewBtn();
   renderFocus();
   renderSide();
@@ -3947,8 +4254,8 @@ window.addEventListener('load', () => requestAnimationFrame(async () => {
     $('proj').textContent = collab.name;
     known.modelEtag = collab.model_etag;
     const d = await api('GET', '/api/threads?since=-1'); threadsVer = d.version; threads = d.threads; pollKey = d.key;
-    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag; known.hoVer = d.handover_version;
-    loadActivity(); loadSuggestions(); loadHotspots(); loadHandover();
+    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag; known.hoVer = d.handover_version; known.archVer = d.architecture_version ?? d.architecture_etag;
+    loadActivity(); loadSuggestions(); loadHotspots(); loadHandover(); loadArch();
     $('hint').style.display = 'none';
   } else { $('proj').textContent = qs.has('sample') ? 'sample' : 'local file'; loadHotspots(); }
   const url = qs.has('sample') ? null : qs.get('model') || collab?.model;
