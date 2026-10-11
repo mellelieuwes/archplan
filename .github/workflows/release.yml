@@ -25,7 +25,7 @@ jobs:
     steps:
       # The branch head rather than the pushed commit: a run that waited for an
       # earlier one starts from that run's release commit.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: develop
           fetch-depth: 0
@@ -41,7 +41,7 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: steps.check.outputs.skip != 'true'
         with:
           python-version: "3.9"
