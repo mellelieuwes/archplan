@@ -823,6 +823,14 @@ function glossaryMD(m, c) {
 }
 const plural = (n, w) => `${esc(n)} ${w}${n === 1 ? '' : 's'}`;
 
+// ---------- concept terms ----------
+// Terms compare as words, not spellings: a GLOSSARY.md read back lists the
+// name first in its own case, while a proposal may order the same terms
+// differently. 'Cart item', 'cartItem' and 'CART_ITEM' are one term.
+const termKey = t => String(t).replace(/(\p{Ll}|\p{N})(\p{Lu})/gu, '$1 $2').toLowerCase()
+  .split(/[^\p{L}\p{N}]+/u).filter(Boolean).join(' ');
+const conceptTerms = k => [...new Set([k.name || '', ...(k.terms || [])].map(termKey).filter(Boolean))].sort();
+
 // ---------- diff ----------
 function diffModels(a, b) {
   const D = {items: [], type: {}, comp: {}, edge: {}, cedge: {}, msg: {}, concept: {}, leak: {}};
@@ -908,7 +916,7 @@ function diffModels(a, b) {
   }
   // vocabulary: concepts, each component's uses and avoid, and the leaks they cause
   const ka = a.vocabulary?.concepts || {}, kb = b.vocabulary?.concepts || {};
-  const kstr = k => JSON.stringify([k.name, k.owner || '', k.kind || '', k.definition || '', k.terms || []]);
+  const kstr = k => JSON.stringify([k.name, k.owner || '', k.kind || '', k.definition || '', conceptTerms(k)]);
   for (const id of union(Object.keys(ka), Object.keys(kb))) {
     const x = ka[id], y = kb[id];
     if (!x) { D.concept[id] = 'added'; push({cat: 'glossary', op: 'concept.add', id, cls: 'add', text: `concept ${y.name}${y.owner ? ' owned by ' + cname(b, y.owner) : ''}`}); continue; }
@@ -918,7 +926,7 @@ function diffModels(a, b) {
     if (x.name !== y.name) ch.push(`renamed from ${x.name}`);
     if ((x.owner || '') !== (y.owner || '')) ch.push(`owner ${cname(a, x.owner) || 'none'} → ${cname(b, y.owner) || 'none'}`);
     if ((x.kind || '') !== (y.kind || '')) ch.push(`kind ${x.kind || 'none'} → ${y.kind || 'none'}`);
-    if (JSON.stringify(x.terms || []) !== JSON.stringify(y.terms || [])) ch.push(`terms: ${(y.terms || []).join(', ')}`);
+    if (JSON.stringify(conceptTerms(x)) !== JSON.stringify(conceptTerms(y))) ch.push(`terms: ${(y.terms || []).join(', ')}`);
     if ((x.definition || '') !== (y.definition || '')) ch.push('definition changed');
     D.concept[id] = 'changed';
     push({cat: 'glossary', op: 'concept.change', id, from: x, to: y, cls: 'chg', text: `concept ${y.name}: ${ch.join('; ')}`});
