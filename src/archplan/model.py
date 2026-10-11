@@ -12,7 +12,8 @@ ANCHORS = ("Anchors name what a thread is about: type:<type id>, comp:<component
            "cedge:<from>-><to> (a component dependency), msg:<sequence id>:<message id>, "
            "concept:<concept id> (a glossary concept), leak:<component id>:<concept id> (a component using "
            "terms of a concept it should not), tedge:<kind>:<from type>-><to type> (a type relation), "
-           "task:<plan task key>, step:<plan task key>#<step index>, finding:<finding id>, glossary (a request to draft glossaries), and group:<anchor>|<anchor>|... "
+           "task:<plan task key>, step:<plan task key>#<step index>, finding:<finding id>, glossary (a request to draft glossaries), suggest (a request for refactor proposals), "
+           "suggestion:<suggestion id> (a proposal under discussion or planned), and group:<anchor>|<anchor>|... "
            "for one comment on several items, such as an import cycle.")
 
 
@@ -66,6 +67,17 @@ def get_item(p: Project, anchor: str):
         return {"glossaries": sorted(c for c, x in (v.get("components") or {}).items() if x.get("file")),
                 "concepts": len(v.get("concepts") or {}),
                 "next": "get_vocabulary_candidates, then propose_glossary"}
+    if anchor == "suggest":
+        from .brief import settings
+        return {**settings(p), "next": "get_refactor_brief, then propose_refactor for each idea, then reply here"}
+    if kind == "suggestion":
+        from .suggestions import Suggestions
+        try:
+            sg = Suggestions(p.dir).get(rest)
+        except KeyError:
+            return None
+        return {k: sg.get(k) for k in ("id", "kind", "status", "title", "rationale", "note", "ops", "fixes",
+                                       "verified", "effort", "risk", "opportunity", "reason") if sg.get(k) is not None}
     if kind == "finding":
         from .findings import Findings
         try:

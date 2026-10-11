@@ -151,6 +151,35 @@ TOOLS = [
          "components": {"type": "object"}, "note": {"type": "string"},
          "thread": {"type": "string", "description": "the thread this answers, such as the glossary request"}},
          "required": ["components"]}},
+    {"name": "get_refactor_brief",
+     "description": "Ranked refactor opportunities from what archplan knows: new findings grouped by component pair "
+                    "or cycle, churn hotspots and misplaced glossary terms. Each has an id, a value score (severity x "
+                    "churn x fan-in), its components, finding ids, compact facts and 1 to 3 heuristic moves. "
+                    "Opportunities with a pending or planned proposal are left out. rejected_before lists proposals "
+                    "the human rejected, with the reason: do not repeat them. Call it when a thread anchored "
+                    "\"suggest\" asks for proposals.",
+     "inputSchema": {"type": "object", "properties": {
+         "top": {"type": "integer", "default": 8, "maximum": 30},
+         "focus": {"type": "array", "items": {"type": "string"}, "description": "component ids to focus on"},
+         "kinds": {"type": "array", "items": {"type": "string"},
+                   "description": "finding kinds or groups, e.g. structure.cycle or layers"}}}},
+    {"name": "propose_refactor",
+     "description": "Propose one small refactor (one concern) as a pending suggestion of kind refactor. ops are "
+                    "target edits as for edit_target. archplan applies them to a copy of the target and recomputes "
+                    "cycles, upward layer dependencies and policy breaks: verified.fixed and verified.introduced "
+                    "in the result. Other fixes are claimed, not verified. The rationale names the evidence (files, "
+                    "counts, finding ids). Pass the request thread as thread.",
+     "inputSchema": {"type": "object", "properties": {
+         "title": {"type": "string", "description": "Imperative, under 80 characters."},
+         "rationale": {"type": "string", "description": "Why, with the evidence; a few sentences."},
+         "ops": {"type": "array", "items": {"type": "object", "properties": {"op": {"type": "string", "enum": list(EDIT_OPS)}},
+                                            "required": ["op"]}},
+         "fixes": {"type": "array", "items": {"type": "string"}, "description": "finding ids this fixes"},
+         "opportunity": {"type": "string", "description": "the opportunity id from get_refactor_brief"},
+         "effort": {"type": "string", "enum": ["S", "M", "L"], "default": "M"},
+         "risk": {"type": "string", "enum": ["low", "med", "high"], "default": "med"},
+         "thread": {"type": "string"}},
+         "required": ["title", "rationale", "ops"]}},
     {"name": "update_profile",
      "description": "Replace the proposed architecture profile (the whole object, as get_architecture's profile "
                     "has it; use full=true there to get it). Only while the profile is proposed: once the human "
@@ -201,7 +230,8 @@ INSTRUCTIONS = (
     "is feedback. After changing code, call refresh_model so the editor shows the remaining plan. Use edit_target "
     "to propose a refactor of the target when asked, instead of describing it in prose; the human accepts or "
     "rejects it in the editor. Mention model items in messages as @[Label](anchor). Threads the human locked in "
-    "as planned refactors wait until the human sends them as a handover; then follow get_handover.")
+    "as planned refactors wait until the human sends them as a handover; then follow get_handover. A thread "
+    "anchored \"suggest\" asks for refactor proposals: call get_refactor_brief, then propose_refactor.")
 
 
 class Agent:
@@ -280,9 +310,12 @@ class Agent:
         return find_items(self.p, query, kind)
 
     def edit_target(self, ops, note="", thread=None):
+        return self._propose(ops, note, thread, "edit")
+
+    def _propose(self, ops, note, thread, kind):
         if thread:
             find(self.store.read(), thread)  # fail before saving when the thread does not exist
-        out = propose(self.p, ops, note, thread)
+        out = propose(self.p, ops, note, thread, kind)
         if thread:
             self.store.reply(thread, f"I proposed {len(ops)} change(s) to the target ({out['suggestion']})"
                              + (f": {note}" if note else ".") + " Review them in the editor.", "agent")
@@ -293,7 +326,13 @@ class Agent:
         return hotspots.summary(hotspots.hotspots(self.p, int(since_days)), min(int(limit), 100))
 
     def refresh_model(self):
-        return {"counts": self.p.export(require_trust=True), "note": "The editor reloads the as-is model and rebases the target."}
+        out = {"counts": self.p.export(require_trust=True), "note": "The editor reloads the as-is model and rebases the target."}
+        from .brief import auto_tick
+        try:
+            auto_tick(self.p, self.store)
+        except Exception:  # auto mode must never fail an export
+            pass
+        return out
 
     def get_architecture(self, breaks=5, full=False):
         st = architecture.Architecture(self.p).state()
@@ -342,7 +381,28 @@ class Agent:
         if not target:
             raise ValueError("no model yet; call refresh_model")
         ops = glossary_ops(target, components)
-        return self.edit_target(ops, note or f"Glossaries for {len(components)} component(s).", thread)
+        return self._propose(ops, note or f"Glossaries for {len(components)} component(s).", thread, "glossary")
+
+    def get_refactor_brief(self, top=8, focus=None, kinds=None):
+        from .brief import brief
+        return brief(self.p, top, focus or None, kinds or None, self.store)
+
+    def propose_refactor(self, title, rationale, ops, fixes=None, opportunity=None, effort="M", risk="med",
+                         thread=None):
+        from .brief import propose_refactor
+        if thread:
+            find(self.store.read(), thread)
+        sg = propose_refactor(self.p, title, rationale, ops, fixes, opportunity, effort, risk, thread)
+        v = sg["verified"]
+        if thread:
+            self.store.reply(thread, f"I proposed a refactor ({sg['id']}): {sg['title']}. Review it in the editor.",
+                             "agent")
+        return {"suggestion": sg["id"], "status": "pending", "verified": v,
+                "message": "The human plans, discusses or rejects it in the editor; a rejection comes with a reason. "
+                           + ("Note: the ops introduce new findings; check verified.introduced. "
+                              if v["introduced"] else "")
+                           + ("Some fixes could not be verified from the model (verified.unverified)."
+                              if v["unverified"] else "")}
 
     def get_handover(self):
         h = self.handovers.current()
@@ -455,13 +515,15 @@ ACTIVITY = {
     "get_findings": "Reading the findings",
     "get_vocabulary_candidates": "Reading vocabulary candidates",
     "propose_glossary": "Proposed glossaries",
+    "get_refactor_brief": "Reading the refactor brief",
+    "propose_refactor": "Proposed a refactor: {title}",
     "label_finding": "Labelled finding {id}: {label}",
     "propose_batches": "Proposed how to split the refactors into batches",
     "set_refactor_state": "{progress}",
 }
 DONE = {"refresh_model": "Re-exported the model"}  # long calls: a second entry when they finish
 AFTER = ("reply", "open_thread", "edit_target", "propose_batches", "set_refactor_state", "update_profile",
-         "label_finding", "propose_glossary")  # recorded only when they succeed
+         "label_finding", "propose_glossary", "propose_refactor")  # recorded only when they succeed
 
 
 def record(p: Project, store: Store, tool: str, args: dict, done: bool = False) -> None:

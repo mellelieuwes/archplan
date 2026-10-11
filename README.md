@@ -63,6 +63,7 @@ archplan up        # starts the editor in the background and prints its URL
 | Review the architecture profile: units, file roles and the rules between them | Proposes a profile with `update_profile`; checks code against it with `get_architecture` |
 | Work through the findings: discuss one, dismiss it with a reason, or accept it as is | Lists them with `get_findings`; labels the ones a heuristic cannot settle with `label_finding` |
 | Ask Claude to draft the per-component glossaries | Reads ranked candidate terms with `get_vocabulary_candidates`; proposes concepts, definitions, `uses` and `avoid` with `propose_glossary` |
+| Ask for refactor proposals, or switch on auto mode; then plan, discuss or reject each one | Reads ranked opportunities with `get_refactor_brief`; proposes small refactors with `propose_refactor`, which archplan verifies |
 | Look at hotspots and components that change together | Finds hidden coupling in the git history with `get_hotspots` and opens a thread on it |
 | Lock in a settled thread as a planned refactor, then go on with the open discussions | Leaves planned refactors alone; they do not wait on it |
 | Order the planned refactors and send them all as one handover: all in one go, or ask for a split first | Reads them with `get_handover`; for a split, proposes batches with `propose_batches` |
@@ -73,14 +74,14 @@ Everything is stored in `.archplan/` in the repository:
 
 | File | What it holds |
 |---|---|
-| `config.json` | export command, model path, port |
+| `config.json` | export command, model path, port, auto suggestion mode |
 | `model.archmodel.json` | the as-is model, written by the exporter |
 | `target.archmodel.json` | the target model |
 | `base.archmodel.json` | the as-is model the target was last edited against, for rebasing |
 | `state.json` | target revision and the plan's intent |
 | `plan.md`, `plan.json` | the change plan, written by the editor |
 | `threads.json` | the comment threads |
-| `suggestions.json` | target changes the agent proposed, and what you decided |
+| `suggestions.json` | target changes the agent proposed, and what you decided, with your reason for a rejected refactor |
 | `handovers.json` | planned refactors you sent to the agent, its batches and progress |
 | `architecture.json` | the architecture profile: units, roles, rules and layers |
 | `baseline.json` | findings you accepted or dismissed, and Claude's labels on findings |
@@ -88,10 +89,11 @@ Everything is stored in `.archplan/` in the repository:
 | `vocab-cache.json` | the cached word counts per file |
 | `activity.json` | what the agent did last, shown in the editor |
 | `hotspots.json` | the cached git history analysis |
+| `suggest-state.json` | when archplan last asked Claude for refactor proposals |
 
 Commit `.archplan/` to share the target, plan and threads with your team.
-`server.json`, `activity.json`, `hotspots.json`, `vocab-cache.json` and the
-logs are ignored.
+`server.json`, `activity.json`, `hotspots.json`, `vocab-cache.json`,
+`suggest-state.json` and the logs are ignored.
 
 In a message, `@[Label](anchor)` mentions a model item, for example
 `@[Orders](comp:shop.orders)`. The editor and the agent both use this form.
@@ -187,6 +189,33 @@ step for a Python project:
 `--export` runs the configured export command first. It runs only once a
 person approved that command with `archplan trust`, so in CI run the
 exporter yourself, as above.
+
+## Refactor proposals
+
+archplan ranks refactor opportunities from what it already knows: new
+findings, churn, dependency fan-in and misplaced glossary terms. Findings
+about the same component pair or cycle form one opportunity. The value of an
+opportunity is its severity times the churn and the fan-in of its
+components. Each comes with one to three hints, such as "invert this
+dependency" or "split this type by its field groups".
+
+Ask Claude for proposals in the editor. Claude reads the opportunities, reads
+the code, and proposes small refactors as target edits with a rationale.
+archplan applies each proposal to a copy of the target and recomputes the
+cycles, upward layer dependencies and policy breaks. It shows which findings
+the proposal fixes and which it introduces. Other fixes are claims.
+
+For each proposal you can:
+
+- **plan** it: the edits go into the target, and a planned refactor holds the
+  title and rationale;
+- **discuss** it in a thread first;
+- **reject** it with a reason. Claude sees the reason and does not propose the
+  same idea again.
+
+In auto mode, archplan asks Claude for proposals by itself: after an export
+that makes new findings, and when no proposal is pending any more. It asks
+at most once an hour, and never while a request is still open.
 
 ## Glossaries
 

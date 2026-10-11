@@ -78,8 +78,11 @@ def suggestion_line(x: dict) -> str:
     what = {"accepted": f"accepted ({k} of {n} ops)", "partial": f"partly accepted ({k} of {n} ops: "
             + ", ".join(map(str, x["accepted"])) + ")", "rejected": f"rejected (0 of {n} ops)"}.get(x["status"], x["status"])
     on = f" in thread {x['thread']}" if x.get("thread") else ""
-    note = " ".join((x.get("note") or "").split())[:200]
-    return f"suggestion {x['id']}{on} {what}" + (f": {note}" if note else "")
+    note = " ".join((x.get("title") or x.get("note") or "").split())[:200]
+    line = f"suggestion {x['id']}{on} {what}" + (f": {note}" if note else "")
+    if x.get("reason"):
+        line += " Reason: " + " ".join(x["reason"].split())[:300]
+    return line
 
 
 def handover_line(h: dict, was: str | None) -> str | None:

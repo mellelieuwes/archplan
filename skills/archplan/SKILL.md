@@ -129,6 +129,22 @@ When the human asks for glossaries, or a thread is anchored on `glossary`:
    concepts. The human reviews it as a suggestion. On approval, write the
    `GLOSSARY.md` files as the handover asks.
 
+### Refactor proposals
+
+A thread anchored `suggest` asks you for refactor proposals. The human opens
+it, or archplan does in auto mode.
+
+1. Call `get_refactor_brief` (with the thread's focus, if any).
+2. Read the code around the top opportunities. Check the evidence sites.
+3. Propose concrete, small refactors with `propose_refactor`: one concern
+   each, ops on the target model, the finding ids it fixes, effort and risk,
+   and a rationale that names the evidence (files, counts, finding ids).
+   Pass the request thread as thread. Check `verified` in the result; when a
+   proposal introduces findings, rethink it.
+4. Never repeat an idea under `rejected_before`, or one of an opportunity's
+   `rejected` reasons.
+5. Reply in the request thread with a short list of what you proposed.
+
 ## 6. Model before you build
 
 When the human asks you to model a change, use `edit_target` (add or move

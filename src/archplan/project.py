@@ -3,7 +3,7 @@
 The directory holds everything archplan shares between the human (in the
 editor) and an agent (over MCP):
 
-  config.json            how to export the code's model, which port to use
+  config.json            how to export the code's model, which port to use, auto suggestion mode
   model.archmodel.json   the as-is model, written by the exporter
   target.archmodel.json  the target model the human (or agent) edits
   base.archmodel.json    the as-is model the target was last edited against
@@ -18,6 +18,7 @@ editor) and an agent (over MCP):
   baseline.json          findings the human accepted or dismissed, and Claude's labels on findings
   vocabulary.json        terms to leave out of the glossary candidates
   vocab-cache.json       per-file word counts for the candidates; not committed
+  suggest-state.json     when archplan last asked for refactor proposals; not committed
   server.json            the running editor server (url, pid); not committed
 """
 
@@ -42,6 +43,7 @@ server.log
 activity.json
 hotspots.json
 vocab-cache.json
+suggest-state.json
 *.tmp
 .*.lock
 """

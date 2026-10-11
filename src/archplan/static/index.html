@@ -246,6 +246,10 @@ ul.breaks{margin:4px 0 8px;padding-left:18px;font-size:13px;max-height:260px;ove
 .cand-x{font-size:12.5px;padding:2px 4px 8px;display:grid;gap:4px;overflow-wrap:anywhere}
 .draft{margin-top:10px}.draft textarea{width:100%;box-sizing:border-box}.draft.big .btn.primary{font-size:15px;padding:8px 14px}
 .sop .sub{display:block;font-size:12.5px;color:var(--mute)}
+.sgx{width:400px;padding:8px 12px}.sgx .mh{padding-left:0}.sgx-row{display:flex;gap:10px;align-items:center;margin:6px 0}.sgx-row>.mute{width:72px;flex:none;font-size:13px;white-space:nowrap}
+.sgx-auto{display:flex;gap:8px;align-items:flex-start;margin:6px 0;cursor:pointer;font-size:13.5px}.sgx-busy{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--agent-ink);background:var(--agent-bg);border-radius:7px;padding:5px 8px;margin:4px 0}
+.sug.ref .sug-h .pill{font-weight:400;font-size:12px;padding:0 7px}.ref-t{font-weight:600;font-size:14.5px;margin:4px 0 2px}.ref-fx{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:4px 0}.ref-fx .pill{font-size:12px;padding:0 8px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ref-in{color:var(--rem);font-size:13px;margin:2px 0 4px}
 </style>
 </head>
 <body>
@@ -256,6 +260,7 @@ ul.breaks{margin:4px 0 8px;padding-left:18px;font-size:13px;max-height:260px;ove
   <div class="spacer"></div>
   <button class="pill agent" id="agentPill" hidden title="What Claude did last"></button>
   <button class="pill warn" id="sugPill" hidden title="Show the first suggestion"></button>
+  <div class="menu-wrap" id="suggestWrap" hidden><button class="btn" id="suggestBtn" title="Ask Claude to propose refactors">✦ Suggest refactors ▾</button><div class="menu sgx" id="suggestMenu" hidden></div></div>
   <button class="btn primary" id="sendBtn" hidden title="Hand the planned refactors to Claude">Send plan to Claude</button>
   <button class="btn" id="searchBtn" title="Find a component, type, task or action">⌕ Search <span class="kbd">⌘K</span></button>
   <div class="menu-wrap"><button class="btn" id="shareBtn">Share ▾</button><div class="menu" id="shareMenu" hidden></div></div>
@@ -583,7 +588,8 @@ async function pollThreads() {
       if (d.version !== threadsVer) { const was = markers(); threadsVer = d.version; threads = d.threads; onThreads(markers() !== was); }
       if (d.model_etag && d.model_etag !== known.modelEtag) { known.modelEtag = d.model_etag; await reloadAsIs(); }
       if (d.target_rev > known.targetRev) { known.targetRev = d.target_rev; await reloadTarget(d.target_by); refreshPreviews(); }
-      if (d.suggestions_version !== known.sugVer) { known.sugVer = d.suggestions_version; loadSuggestions(); }
+      if (d.suggestions_version !== known.sugVer) { known.sugVer = d.suggestions_version; loadSuggestions(); if (AUTO.ok) loadAuto(); }
+      if ((d.suggest_version ?? d.suggest_etag) !== known.autoVer) { known.autoVer = d.suggest_version ?? d.suggest_etag; if (AUTO.ok !== false) loadAuto(); }
       if (d.activity_etag !== known.actEtag) { known.actEtag = d.activity_etag; loadActivity(); }
       if (d.handover_version !== known.hoVer) { known.hoVer = d.handover_version; loadHandover(); }
       if ((d.architecture_version ?? d.architecture_etag) !== known.archVer) { known.archVer = d.architecture_version ?? d.architecture_etag; loadArch(); }
@@ -2429,7 +2435,7 @@ function threadHTML(t, withLink, inCard) {
       ${t.status === 'planned' ? `<span class="wait plan">${stack().includes(t) ? `planned refactor ${stack().indexOf(t) + 1}` : 'refactor done'}</span>` : nd === 'decision' ? '<span class="wait human">decide</span>' : nd === 'feedback' ? '<span class="wait fb">read</span>' : w === 'agent' ? '<span class="wait agent">waiting on Claude</span>' : '<span class="wait">resolved</span>'}</div>
     ${t.anchor?.startsWith('finding:') ? findBox(t) : ''}${t.snapshot ? snapHTML(t) : ''}
     ${msgs}
-    ${t.status === 'open' ? pending().filter(s => s.thread === t.id).map(sugCard).join('') : ''}
+    ${t.status === 'open' ? pending().filter(s => s.thread === t.id).map(s => isRef(s) ? `<div class="row fsm"><span class="pill add">proposed refactor</span><button class="linkb" data-act="ref.open" data-id="${esc(s.id)}">${esc(s.title || 'Open the proposal')}</button></div>` : sugCard(s)).join('') : ''}
     ${t.status === 'resolved' ? `<div class="row"><button class="btn" data-act="thread.reopen" data-id="${t.id}">Reopen</button></div>`
     : `<textarea id="r-${t.id}" rows="1" placeholder="Reply, or type @ to link a component, type or task"></textarea>
     ${lockFor === t.id ? lockForm(t) : `<div class="row"><button class="btn" data-act="thread.reply" data-id="${t.id}">Reply</button>${t.status === 'open'
@@ -2955,7 +2961,7 @@ $('hoDlg').addEventListener('click', async e => {
 $('hoDlg').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); $('hoDlg').hidden = true; } });
 $('sendBtn').addEventListener('click', hoDialog);
 // Keep what the user types in the lock-in and edit forms across live updates.
-$('panel').addEventListener('input', e => { if (/^(lk|rfe|ar|fd|vd)-/.test(e.target.id)) drafts[e.target.id] = e.target.value; });
+$('panel').addEventListener('input', e => { if (/^(lk|rfe|ar|fd|vd|rj)-/.test(e.target.id)) drafts[e.target.id] = e.target.value; });
 const clearDrafts = pre => Object.keys(drafts).filter(k => k.startsWith(pre)).forEach(k => delete drafts[k]);
 // Drag cards to reorder the stack; drag chips between the batches of a proposal.
 $('panel').addEventListener('dragstart', e => {
@@ -3361,7 +3367,7 @@ function findCard(f) {
     ? `<span class="pill ${f.state === 'accepted' ? 'add' : ''}">${esc(f.state)}</span>${f.reason ? `<span class="mute fsm" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.reason)}">${esc(f.reason)}</span>` : '<span class="spacer"></span>'}<button class="btn" data-act="find.reopen" data-id="${esc(f.id)}">Reopen</button>`
     : findDis === f.id
     ? `<input id="fd-${esc(f.id)}" value="${esc(draft('fd-' + f.id, ''))}" placeholder="Why? For example: intended, generated code" style="flex:1"><button class="btn primary" data-act="find.dismiss" data-id="${esc(f.id)}">Dismiss</button><button class="btn" data-act="find.discancel">Cancel</button>`
-    : `<span class="spacer"></span>${f.thread ? `<button class="linkb" data-act="find.thread" data-id="${esc(f.thread)}">In discussion${th && th.status !== 'open' ? ` (${esc(th.status)})` : ''}</button>` : `<button class="btn" data-act="find.discuss" data-id="${esc(f.id)}">Discuss</button>`}<button class="btn ghost" data-act="find.dis" data-id="${esc(f.id)}">Dismiss…</button><button class="btn ghost" data-act="find.accept" data-id="${esc(f.id)}" title="Add it to the baseline: archplan check stops reporting it">Accept as is</button>`;
+    : `<span class="spacer"></span>${(ps => ps ? `<button class="pill add" data-act="ref.open" data-id="${esc(ps.id)}" title="${esc(ps.title || 'A pending refactor proposal')}">Proposed fix</button>` : '')(sugFor(f.id))}${f.thread ? `<button class="linkb" data-act="find.thread" data-id="${esc(f.thread)}">In discussion${th && th.status !== 'open' ? ` (${esc(th.status)})` : ''}</button>` : `<button class="btn" data-act="find.discuss" data-id="${esc(f.id)}">Discuss</button>`}<button class="btn ghost" data-act="find.dis" data-id="${esc(f.id)}">Dismiss…</button><button class="btn ghost" data-act="find.accept" data-id="${esc(f.id)}" title="Add it to the baseline: archplan check stops reporting it">Accept as is</button>`;
   return `<div class="find${findOn === f.id ? ' on' : ''}${base ? ' base' : ''}" id="fi-${esc(f.id)}" style="${fGroup(f) === 'profile' && !base ? 'border-color:var(--rem-line,#fecaca)' : ''}">
     <div data-act="find.focus" data-id="${esc(f.id)}" title="Show it in the diagram" style="cursor:pointer">
       <div class="row" style="margin:0;gap:8px"><span class="fk" style="color:${c2}"><i style="background:${c1}"></i>${esc(kindLabel(f))}</span><span class="spacer"></span>${f.label ? `<span class="pill agent" title="Claude's judgement, not a verdict">Claude: ${esc(f.label)}</span>` : ''}${f.strength || f.basis ? `<span class="mute fsm">${esc([f.strength, f.basis].filter(Boolean).join(' · '))}</span>` : ''}</div>
@@ -3526,6 +3532,113 @@ Object.assign(actions, {
 });
 $('draftBtn').addEventListener('click', () => { actions['page.glossary'](); const t = $('vd-note'); if (t) { t.scrollIntoView({block: 'center'}); t.focus(); } });
 $('gloss').addEventListener('input', e => { if (e.target.id === 'vd-note') drafts['vd-note'] = e.target.value; });
+// ---------- refactor proposals ----------
+// GET /api/suggest: whether Claude proposes refactors on its own, and the open
+// request. Refactor suggestions (kind "refactor") carry a title, rationale,
+// effort, risk and the findings they claim to fix. Without the endpoint all of this stays hidden.
+const AUTO = {ok: null, d: null, busy: '', count: 5, scope: 'all', kinds: new Set(['cycles', 'layers', 'profile', 'types', 'coupling', 'vocabulary']), rej: null, more: new Set()};
+const SKINDS = [['cycles', 'Cycles'], ['layers', 'Layers'], ['profile', 'Profile'], ['types', 'Types'], ['coupling', 'Coupling'], ['vocabulary', 'Vocabulary']];
+const isRef = s => s.kind === 'refactor';
+const refs = () => pending().filter(isRef).sort((a, b) => (b.verified?.fixed || []).length - (a.verified?.fixed || []).length || (b.fixes || []).length - (a.fixes || []).length);
+const sugFor = fid => refs().find(s => (s.fixes || []).includes(fid) || (s.verified?.fixed || []).includes(fid));
+async function loadAuto() {
+  if (!collab) return;
+  try { AUTO.d = await api('GET', '/api/suggest'); AUTO.ok = true; if (AUTO.d?.count) AUTO.count = AUTO.d.count; }
+  catch { AUTO.ok = false; AUTO.d = null; }
+  if (!D) return;
+  const busy = AUTO.d?.open_request || '';
+  renderHeader(); if (!$('suggestMenu').hidden) drawSuggestMenu();
+  if (busy !== AUTO.busy) { AUTO.busy = busy; if (page === 'plan') renderSide(); }
+}
+const scopeComps = sc => sc === 'sel' ? [...new Set([...multi.filter(a => a.startsWith('comp:')).map(a => a.slice(5)), ...(sel?.kind === 'comp' ? [sel.id] : [])])] : sc === 'focus' ? [...focus] : [];
+function drawSuggestMenu() {
+  const d = AUTO.d || {}, note = $('sgx-note')?.value || '', nF = scopeComps('focus').length, nS = scopeComps('sel').length;
+  if (AUTO.scope !== 'all' && !scopeComps(AUTO.scope).length) AUTO.scope = 'all';
+  const seg = (k, v, l, off) => `<button class="${(k === 'count' ? AUTO.count : AUTO.scope) === v ? 'on' : ''}" data-sa="${k}" data-v="${esc(String(v))}"${off ? ' disabled' : ''}>${esc(l)}</button>`;
+  $('suggestMenu').innerHTML = `<div class="mh">Suggest refactors</div>
+    ${d.open_request ? `<div class="sgx-busy"><span class="dot live"></span>Claude is drafting proposals… <button class="linkb" data-sa="thread" data-v="${esc(d.open_request)}">Open the thread</button></div>` : ''}
+    <div class="sgx-row"><span class="mute">How many</span><div class="seg">${[3, 5, 10].map(n => seg('count', n, String(n))).join('')}</div></div>
+    <div class="sgx-row"><span class="mute">Where</span><div class="seg">${seg('scope', 'all', 'Whole model')}${seg('scope', 'focus', `Focused${nF ? ' (' + nF + ')' : ''}`, !nF)}${seg('scope', 'sel', `Selected${nS ? ' (' + nS + ')' : ''}`, !nS)}</div></div>
+    <div class="sgx-row" style="align-items:flex-start"><span class="mute">About</span><div class="chips" style="margin:0">${SKINDS.map(([k, l]) => `<button class="pill${AUTO.kinds.has(k) ? ' acc' : ''}" data-sa="kind" data-v="${k}">${l}</button>`).join('')}</div></div>
+    <input id="sgx-note" value="${esc(note)}" placeholder="Optional note, e.g. keep the public API stable" style="width:100%;box-sizing:border-box;margin:4px 0">
+    <div class="row" style="margin:4px 0"><button class="btn primary" data-sa="go"${AUTO.kinds.size ? '' : ' disabled'}>Suggest</button><span class="mute fsm">Claude reads the findings and the model, then proposes refactors you can plan, discuss or reject.</span></div>
+    <div class="sep"></div>
+    <label class="sgx-auto"><input type="checkbox" data-sa="auto"${d.auto ? ' checked' : ''}><span><b>Automatic</b><br><span class="mute fsm">Claude proposes refactors on its own after each export and whenever the queue of proposals is empty.</span>${d.last_at ? `<br><span class="mute fsm">Last proposals ${esc(relTime(d.last_at))}.</span>` : ''}</span></label>`;
+}
+async function requestSuggest() {
+  const comps = scopeComps(AUTO.scope), note = val('sgx-note');
+  try {
+    const r = await api('POST', '/api/suggest', {count: AUTO.count, focus: comps, kinds: [...AUTO.kinds], ...(note ? {note} : {})});
+    toast('Claude is drafting proposals. They appear under Suggestions in the plan.');
+    if (r?.thread?.id) { await syncThreads(); AUTO.d = {...(AUTO.d || {}), open_request: r.thread.id}; }
+  } catch (err) { toast(`Could not ask for proposals: ${err.message}`); }
+  closeMenus(); loadAuto();
+}
+$('suggestBtn').addEventListener('click', () => { const was = !$('suggestMenu').hidden; closeMenus(); if (was) return; drawSuggestMenu(); $('suggestMenu').hidden = false; fitMenu($('suggestMenu')); });
+$('suggestMenu').addEventListener('click', e => {
+  e.stopPropagation();  // the redraw detaches the target, which the outside-click handler would read as outside
+  const b = e.target.closest('[data-sa]'); if (!b || b.disabled) return;
+  const k = b.dataset.sa, v = b.dataset.v;
+  if (k === 'count') AUTO.count = +v; else if (k === 'scope') AUTO.scope = v;
+  else if (k === 'kind') { if (AUTO.kinds.has(v)) AUTO.kinds.delete(v); else AUTO.kinds.add(v); }
+  else if (k === 'go') return requestSuggest();
+  else if (k === 'thread') { closeMenus(); return openThread(v); }
+  else return;
+  drawSuggestMenu();
+});
+$('suggestMenu').addEventListener('change', async e => {
+  if (e.target.dataset.sa !== 'auto') return;
+  const on = e.target.checked;
+  try { await api('PUT', '/api/suggest/auto', {on, count: AUTO.count}); toast(on ? 'Claude now proposes refactors on its own.' : 'Automatic proposals are off.'); }
+  catch (err) { e.target.checked = !on; toast(`Could not change the setting: ${err.message}`); }
+  loadAuto();
+});
+function openSug(id) {
+  if (leftMode !== 'plan') { leftMode = 'plan'; localStorage.setItem('archplan.left', 'plan'); renderHeader(); }
+  sel = null; multi = []; page = 'plan'; if (view !== 'seq') applySel(); renderSide();
+  flash($('sug-' + id));
+}
+const RISK = {low: 'add', med: 'warn', medium: 'warn', high: 'rem'};
+const fname = id => findById(id)?.title || id;
+function refCard(s) {
+  const P = SUG.picked[s.id] ||= new Set((s.ops || []).map((_, i) => i)), ops = s.ops || [];
+  const ver = s.verified?.fixed || [], claimed = (s.fixes || []).filter(id => !ver.includes(id)), intro = s.verified?.introduced || [];
+  const nFix = ver.length + claimed.length, shown = AUTO.more.has(s.id) ? ops : ops.slice(0, 4);
+  const fchip = (id, ok) => `<button class="pill${ok ? ' add' : ''}" data-act="find.show" data-id="${esc(id)}" title="${ok ? 'Verified: the preview no longer has this finding' : 'Claimed by Claude, not verified'}">${ok ? '✓ ' : ''}${esc(fname(id))}</button>`;
+  return `<div class="sug ref" id="sug-${esc(s.id)}"><div class="sug-h">Proposed refactor${s.effort ? `<span class="pill">effort ${esc(s.effort)}</span>` : ''}${s.risk ? `<span class="pill ${RISK[s.risk] || ''}">risk ${esc(s.risk)}</span>` : ''}<span class="spacer"></span><span class="mute" style="font-weight:400;font-size:13px">${esc(relTime(s.created))}</span></div>
+    <div class="ref-t">${esc(s.title || 'Refactor')}</div>
+    ${s.rationale ? `<div class="note">${md(s.rationale)}</div>` : s.note ? `<div class="note">${md(s.note)}</div>` : ''}
+    ${nFix ? `<div class="ref-fx"><span class="mute fsm">Fixes ${plural(nFix, 'finding')}${ver.length && claimed.length ? ` (${ver.length} verified)` : ver.length ? ', verified' : ', not verified'}</span>${ver.map(id => fchip(id, true)).join('')}${claimed.map(id => fchip(id, false)).join('')}</div>` : ''}
+    ${intro.length ? `<div class="ref-in">Introduces ${intro.map(t => `<b>${esc(t)}</b>`).join(', ')}</div>` : ''}
+    ${shown.map(o => { const i = ops.indexOf(o), [k, c, t, sub] = opLine(o); return `<label class="sop"><input type="checkbox" data-sug="${esc(s.id)}" data-i="${i}"${P.has(i) ? ' checked' : ''}><span class="k k-${c}">${esc(k)}</span><span>${esc(t)}${sub ? `<span class="sub">${esc(sub.length > 240 ? sub.slice(0, 239) + '…' : sub)}</span>` : ''}</span></label>`; }).join('')}
+    ${ops.length > 4 ? `<button class="linkb fsm" data-act="ref.more" data-id="${esc(s.id)}">${AUTO.more.has(s.id) ? 'Show fewer changes' : `Show all ${ops.length} changes`}</button>` : ''}
+    ${AUTO.rej === s.id ? `<div class="row" style="margin-top:8px"><input id="rj-${esc(s.id)}" value="${esc(draft('rj-' + s.id, ''))}" placeholder="Why not? Claude reads this before the next proposals" style="flex:1"><button class="btn primary" data-act="ref.reject" data-id="${esc(s.id)}">Reject</button><button class="btn" data-act="ref.rejcancel">Cancel</button></div>`
+    : `<div class="acts"><button class="btn primary" data-act="ref.plan" data-id="${esc(s.id)}"${P.size ? '' : ' disabled'} title="Add it to the planned refactors">Plan it</button><button class="btn" data-act="ref.discuss" data-id="${esc(s.id)}">Discuss</button><button class="btn" data-act="ref.rej" data-id="${esc(s.id)}">Reject…</button><button class="btn" data-act="sug.show" data-id="${esc(s.id)}" title="Show the target with this refactor in the diagram">Show in diagram</button><span class="eff">${esc(effText(s))}</span></div>`}</div>`;
+}
+async function refCall(id, what, body, label) {
+  try { const r = await api('POST', `/api/suggestions/${encodeURIComponent(id)}/${what}`, body); SUG.sig = ''; await loadSuggestions(); return r || {}; }
+  catch (err) { toast(`Could not ${label}: ${err.message}`); SUG.sig = ''; loadSuggestions(); }
+}
+Object.assign(actions, {
+  'ref.more': e => { const id = e.dataset.id; if (AUTO.more.has(id)) AUTO.more.delete(id); else AUTO.more.add(id); renderSide(); },
+  'ref.rej': e => { AUTO.rej = e.dataset.id; renderSide(); $('rj-' + AUTO.rej)?.focus(); },
+  'ref.rejcancel': () => { clearDrafts('rj-'); AUTO.rej = null; renderSide(); },
+  'ref.reject': async e => {
+    const id = e.dataset.id, reason = val('rj-' + id); if (!reason) { toast('Give a reason, so Claude can learn from it.'); return $('rj-' + id)?.focus(); }
+    clearDrafts('rj-'); AUTO.rej = null;
+    if (await refCall(id, 'reject', {reason}, 'reject the proposal')) toast('Rejected the proposal.');
+  },
+  'ref.plan': async e => {
+    const id = e.dataset.id, s = SUG.list.find(x => x.id === id);
+    const r = await refCall(id, 'plan', s ? {ops: pickedOps(s)} : {}, 'plan the refactor'); if (!r) return;
+    await reloadTarget('suggestion'); await syncThreads(); gotoSec('planned'); toast('Added to the planned refactors.');
+  },
+  'ref.discuss': async e => {
+    const r = await refCall(e.dataset.id, 'discuss', {}, 'start a discussion'); if (!r) return;
+    await syncThreads(); const tid = r.thread?.id || r.id; if (tid) openThread(tid);
+  },
+  'ref.open': e => openSug(e.dataset.id),
+});
 $('panel').addEventListener('click', e => {
   const mn = e.target.closest('.mention'); if (mn) { e.preventDefault(); return gotoMention(mn.dataset.anchor); }
   const sn = e.target.closest('.snap'); if (sn && !e.target.closest('[data-act]')) return actions['snap.open'](sn);
@@ -3669,7 +3782,7 @@ function planDoc() {
   const P = buildPlan(asIs, toBe, D), {per, loose} = threadPlaces(P);
   const viol = violations(toBe), dec = threads.filter(t => needs(t) === 'decision').length, title = intentTitle();
   const anyChange = D.items.some(i => i.cat !== 'dependency');
-  const loneSug = pending().filter(s => !threads.some(t => t.id === s.thread && t.status === 'open'));
+  const loneSug = pending().filter(s => !isRef(s) && !threads.some(t => t.id === s.thread && t.status === 'open')), R = refs();
   const composeLoose = composeKey && !/^(task|step):/.test(composeKey);
   const rules = toBe.policy.rules.map((r, i) => [r, i]).filter(([r]) => r.effect === 'deny');
   const vio = r => viol.filter(e => ruleHits(r, e.from, e.to));
@@ -3688,6 +3801,7 @@ function planDoc() {
     ${sec('rules', 'Rules', `${rules.map(([r, i]) => { const v = vio(r); return `<div class="rule-row${v.length ? ' bad' : ''}"><span>${esc(ruleText(toBe, r))}</span><span class="n">${v.length ? `${plural(v.reduce((n, e) => n + (e.weight || e.via.length || 1), 0), 'site')}` : ''}</span>${mode === 'asis' ? '' : `<button class="x" data-act="rule.del" data-i="${i}" title="Drop this rule">×</button>`}</div>`; }).join('')
       || '<p class="mute" style="margin:0">No rules yet. Select a dependency line and forbid it.</p>'}
       <p class="mute" style="font-size:13px;margin:6px 0 0">Default <b>${pol.default}</b>${pol.default === 'deny' ? `: only the ${nAllow} allow rules permit a dependency` : ''}.${E ? ` Enforced by <code>${esc(E.tool)}</code> (${esc(E.config)}).` : ''}</p>`)}
+    ${R.length || AUTO.d?.open_request ? sec('suggestions', `Suggestions${R.length ? ` (${R.length})` : ''}`, `${AUTO.d?.open_request ? `<div class="sgx-busy"><span class="dot live"></span>Claude is drafting proposals… <button class="linkb" data-act="find.thread" data-id="${esc(AUTO.d.open_request)}">Open the thread</button></div>` : ''}${R.map(refCard).join('')}`) : ''}
     ${sec('open', `Open discussions${nOpen ? ` (${nOpen})` : ''}`, [...decT, ...qT].map(t => threadHTML(t, true)).join('')
       + (loose.length < nOpen ? `<p class="mute" style="font-size:13px;margin:6px 0 0">${plural(nOpen - loose.length, 'more discussion')} sit${nOpen - loose.length === 1 ? 's' : ''} under the changes below.</p>` : '')
       || '<p class="mute" style="margin:0">No open discussions. Comment on an item from its page.</p>')}
@@ -4186,6 +4300,7 @@ function effText(s) {
   return t + '.';
 }
 function sugCard(s) {
+  if (isRef(s)) return refCard(s);
   const P = SUG.picked[s.id] ||= new Set((s.ops || []).map((_, i) => i)), ops = s.ops || [];
   return `<div class="sug" id="sug-${esc(s.id)}"><div class="sug-h">Suggested change to the target<span class="spacer"></span><span class="mute" style="font-weight:400;font-size:13px">${esc(relTime(s.created))}</span></div>
     ${s.note ? `<div class="note">${md(s.note)}</div>` : ''}
@@ -4388,7 +4503,7 @@ function fitMenu(m) {
   if (r.right > innerWidth - 8) { m.style.left = 'auto'; m.style.right = '0'; }
   if (m.getBoundingClientRect().left < 8) { m.style.right = 'auto'; m.style.left = (8 - m.parentNode.getBoundingClientRect().left) + 'px'; }
 }
-function closeMenus() { ['shareMenu', 'moreMenu', 'viewMenu', 'ovMenu'].forEach(m => $(m).hidden = true); }
+function closeMenus() { ['shareMenu', 'moreMenu', 'viewMenu', 'ovMenu', 'suggestMenu'].forEach(m => $(m).hidden = true); }
 document.addEventListener('click', e => { if (!e.target.closest('.menu-wrap')) closeMenus(); });
 for (const m of ['shareMenu', 'moreMenu']) $(m).addEventListener('click', e => { const b = e.target.closest('[data-mi]'); if (!b || b.disabled) return; closeMenus(); menuItems[m][+b.dataset.mi].run(); });
 $('shareBtn').addEventListener('click', () => openMenu('shareMenu', shareItems()));
@@ -4450,6 +4565,8 @@ function renderHeader() {
   $('repo').title = `The as-is model was exported at ${META.repo}@${META.commit}.`;
   const n = pending().length;
   $('sugPill').hidden = !n;
+  $('suggestWrap').hidden = !AUTO.ok;
+  $('suggestBtn').innerHTML = AUTO.d?.open_request ? '<span class="dot live"></span> Claude is drafting proposals…' : `✦ Suggest refactors${AUTO.d?.auto ? ' · auto' : ''} ▾`;
   $('sendBtn').hidden = !todo().length || !!hoActive();
   $('rolesBtn').hidden = !ARCH; $('leftModes').hidden = !ARCH && !FIND;
   const lm = leftMode === 'arch' && ARCH || leftMode === 'find' && FIND ? leftMode : 'plan', nN = FIND ? findNew() : 0;
@@ -4537,8 +4654,8 @@ window.addEventListener('load', () => requestAnimationFrame(async () => {
     $('proj').textContent = collab.name;
     known.modelEtag = collab.model_etag;
     const d = await api('GET', '/api/threads?since=-1'); threadsVer = d.version; threads = d.threads; pollKey = d.key;
-    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag; known.hoVer = d.handover_version; known.archVer = d.architecture_version ?? d.architecture_etag; known.findVer = d.findings_version ?? d.findings_etag; known.vocVer = d.vocabulary_version ?? d.vocabulary_etag;
-    loadActivity(); loadSuggestions(); loadHotspots(); loadHandover(); loadArch(); loadFindings(); probeVocab();
+    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag; known.hoVer = d.handover_version; known.archVer = d.architecture_version ?? d.architecture_etag; known.findVer = d.findings_version ?? d.findings_etag; known.vocVer = d.vocabulary_version ?? d.vocabulary_etag; known.autoVer = d.suggest_version ?? d.suggest_etag;
+    loadActivity(); loadSuggestions(); loadHotspots(); loadHandover(); loadArch(); loadFindings(); probeVocab(); loadAuto();
     $('hint').style.display = 'none';
   } else { $('proj').textContent = qs.has('sample') ? 'sample' : 'local file'; loadHotspots(); }
   const url = qs.has('sample') ? null : qs.get('model') || collab?.model;

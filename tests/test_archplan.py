@@ -1081,5 +1081,189 @@ class VocabTest(TempProject):
         self.assertEqual(Agent(self.p).list_threads(waiting_on="agent")[0]["anchor"], "glossary")
 
 
+class BriefTest(TempProject):
+    """Refactor brief, proposals, verification, plan/discuss/reject and auto mode."""
+
+    def setUp(self):
+        super().setUp()
+        self.p = project.init(self.root)
+        m = findings_model()
+        m["policy"] = {"default": "allow", "rules": [{"from": "B", "to": "C", "effect": "deny"}]}
+        self.p.model_path.write_text(json.dumps(m))
+        project.write_json(self.p.path("hotspots.json"), {"result": {
+            "head": "x", "since_days": 365, "components": {"A": {"commits": 40}, "B": {"commits": 30},
+                                                           "C": {"commits": 2}, "D": {"commits": 1}},
+            "pairs": []}})
+        self.agent = Agent(self.p)
+
+    def ids(self):
+        from archplan.findings import Findings
+        return {f["kind"] + ":" + "".join(f["components"]): f["id"] for f in Findings(self.p).raw()[0]}
+
+    def test_grouping_and_ranking(self):
+        from archplan.brief import brief
+        b = brief(self.p)
+        ops = {o["kind"] + ":" + "".join(o["components"]): o for o in b["opportunities"]}
+        ids = self.ids()
+        abc = ops["structure.cycle:ABC"]
+        # the policy break on the cut edge B -> C joins the cycle it would cut
+        self.assertEqual(set(abc["findings"]), {ids["structure.cycle:ABC"], ids["layers.policy:BC"]})
+        self.assertEqual(abc["facts"]["cut"], "B → C")
+        self.assertTrue(any("remove_dependency B → C" in m for m in abc["moves"]))
+        self.assertIn("structure.cycle:AD", ops)
+        self.assertIn("types.fields:A", ops)
+        self.assertEqual(b["opportunities"][0]["id"], abc["id"])  # cycle + policy, most churn
+        self.assertEqual(abc["churn"], {"A": 40, "B": 30, "C": 2})
+        self.assertTrue(any(m.startswith("Split User by its field groups") for m in ops["types.fields:A"]["moves"]))
+        self.assertEqual(brief(self.p)["opportunities"][0]["id"], abc["id"])  # stable id
+        self.assertEqual({o["kind"] for o in brief(self.p, kinds=["types"])["opportunities"]},
+                         {"types.fields", "types.synonyms"})
+        self.assertEqual({tuple(o["components"]) for o in brief(self.p, focus=["D"])["opportunities"]}, {("A", "D")})
+        self.assertLess(len(json.dumps(b)), 24000)
+
+    def test_verify_cycle(self):
+        from archplan.brief import brief, verify
+        ids = self.ids()
+        cyc, pol = ids["structure.cycle:ABC"], ids["layers.policy:BC"]
+        out = self.agent.propose_refactor("Cut B -> C", "lib/b/x.ex:1 is the only reference.",
+                                          [{"op": "remove_dependency", "from": "B", "to": "C"}],
+                                          [cyc, pol, ids["types.fields:A"]], brief(self.p)["opportunities"][0]["id"],
+                                          "S", "low")
+        v = out["verified"]
+        self.assertEqual(sorted(v["fixed"]), sorted([cyc, pol]))
+        self.assertEqual((v["introduced"], v["claimed"], v["unverified"]), ([], [ids["types.fields:A"]], []))
+        sg = Suggestions(self.p.dir).get(out["suggestion"])
+        self.assertEqual((sg["kind"], sg["title"], sg["effort"], sg["risk"], sg["status"]),
+                         ("refactor", "Cut B -> C", "S", "low", "pending"))
+        # an opportunity with a pending proposal leaves the brief
+        self.assertNotIn(cyc, [i for o in brief(self.p)["opportunities"] for i in o["findings"]])
+        self.assertEqual(brief(self.p)["excluded_with_pending_proposal"], 2)  # the cycle and the large type
+        # A move that makes a new cycle: D.Thing refers to B.Member, so moving Member into C adds the
+        # type edge D -> C, which closes A -> D -> C -> A.
+        t = json.loads(self.p.model_path.read_text())
+        t["types"]["D.Thing"] = {"name": "Thing", "component": "D", "kind": "struct",
+                                 "fields": [{"name": "member", "ref": "B.Member"}]}
+        t["dependencies"] = [d for d in t["dependencies"] if (d["from"], d["to"]) != ("D", "A")]
+        self.p.target_path.write_text(json.dumps(t))
+        v = verify(self.p, [{"op": "move_type", "type": "B.Member", "to": "C"}], [])
+        self.assertEqual(v["introduced"], ["A → D → C → A form a dependency cycle."])
+        for bad in ([], "x"):
+            with self.assertRaises(ValueError):
+                self.agent.propose_refactor("t", "r", bad)
+        with self.assertRaises(ValueError):
+            self.agent.propose_refactor("t", "r", [{"op": "remove_dependency", "from": "B", "to": "C"}], ["nope"])
+        with self.assertRaises(ValueError):
+            self.agent.propose_refactor("t", "r", [{"op": "remove_dependency", "from": "B", "to": "C"}], effort="XL")
+
+    def test_plan_discuss_reject(self):
+        from archplan.brief import brief
+        ids = self.ids()
+        mk = lambda title: self.agent.propose_refactor(
+            title, "Because.", [{"op": "remove_dependency", "from": "B", "to": "C"}],
+            [ids["structure.cycle:ABC"]])["suggestion"]
+        a, b = mk("Cut B -> C"), mk("Cut B -> C again")
+        srv, url = serve_in_thread(self.p)
+        try:
+            st, d = call(url, f"/api/suggestions/{a}/discuss", "POST", {})
+            self.assertEqual((st, d["created"], d["thread"]["anchor"]), (200, True, f"suggestion:{a}"))
+            tid = d["thread"]["id"]
+            self.assertEqual(call(url, f"/api/suggestions/{a}/discuss", "POST", {})[1]["thread"]["id"], tid)
+            self.assertEqual(Suggestions(self.p.dir).get(a)["status"], "pending")
+            st, d = call(url, f"/api/suggestions/{a}/plan", "POST", {})
+            self.assertEqual(st, 200)
+            th = d["thread"]
+            self.assertEqual((th["id"], th["status"], th["refactor"]["title"], th["refactor"]["summary"]),
+                             (tid, "planned", "Cut B -> C", "Because."))
+            self.assertEqual((d["suggestion"]["status"], d["suggestion"]["plan_thread"]), ("accepted", tid))
+            target = json.loads(self.p.target_path.read_text())
+            self.assertNotIn(("B", "C"), [(x["from"], x["to"]) for x in target["dependencies"]])
+            self.assertEqual(call(url, f"/api/suggestions/{b}/reject", "POST", {})[0], 400)
+            st, d = call(url, f"/api/suggestions/{b}/reject", "POST", {"reason": "B needs C for billing"})
+            self.assertEqual((st, d["suggestion"]["status"], d["suggestion"]["reason"]),
+                             (200, "rejected", "B needs C for billing"))
+            # glossary and plain edits still reject without a reason
+            g = self.agent.edit_target([{"op": "forbid", "from": "C", "to": "D"}])["suggestion"]
+            self.assertEqual(call(url, f"/api/suggestions/{g}/reject", "POST", {})[0], 200)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        rej = brief(self.p)["rejected_before"]
+        self.assertEqual(rej, [{"title": "Cut B -> C again", "reason": "B needs C for billing",
+                                "fixes": [ids["structure.cycle:ABC"]]}])
+        # a planned proposal still keeps its opportunity out of the brief
+        self.assertNotIn(ids["structure.cycle:ABC"], [i for o in brief(self.p)["opportunities"] for i in o["findings"]])
+        self.assertEqual(model.get_item(self.p, f"suggestion:{b}")["reason"], "B needs C for billing")
+
+    def test_auto_mode(self):
+        from archplan import brief
+        store = Store(self.p.dir)
+        t0 = 1_000_000.0
+        self.assertIsNone(brief.auto_tick(self.p, store, t0))  # off: only records the state
+        self.assertEqual(brief.set_auto(self.p, True, 2), {"auto": True, "count": 2})
+        self.assertEqual(json.loads(self.p.path("config.json").read_text())["suggest"], {"auto": True, "count": 2})
+        th = brief.auto_tick(self.p, store, t0, enabled=True)
+        self.assertEqual((th["anchor"], th["messages"][0]["author"]), ("suggest", "archplan"))
+        self.assertIn("up to 2 refactors", th["messages"][0]["text"])
+        self.assertEqual(Agent(self.p).list_threads(waiting_on="agent")[0]["id"], th["id"])
+        # one open request at a time, even much later
+        self.assertIsNone(brief.auto_tick(self.p, store, t0 + 10_000, enabled=True))
+        self.assertEqual(brief.status(self.p, store)["open_request"], th["id"])
+        store.reply(th["id"], "Proposed two.", "agent")
+        self.assertIsNone(brief.status(self.p, store)["open_request"])
+        # a model change with new findings, within the hour: rate limited
+        m = json.loads(self.p.model_path.read_text())
+        m["dependencies"].append({"from": "C", "to": "D", "weight": 1})
+        m["dependencies"].append({"from": "D", "to": "C", "weight": 1})
+        self.p.model_path.write_text(json.dumps(m))
+        self.assertIsNone(brief.auto_tick(self.p, store, t0 + 60))
+        # the findings were seen; a later tick has no new reason
+        self.assertIsNone(brief.auto_tick(self.p, store, t0 + 7200))
+        # pending refactors dropping to zero is a reason
+        ids = self.ids()
+        sid = self.agent.propose_refactor("Cut", "Why.", [{"op": "remove_dependency", "from": "D", "to": "C"}],
+                                          [ids["structure.cycle:CD"]])["suggestion"]
+        self.assertIsNone(brief.auto_tick(self.p, store, t0 + 7300))
+        Suggestions(self.p.dir).decide(self.p, sid, [], "no")
+        th2 = brief.auto_tick(self.p, store, t0 + 7400)
+        self.assertIn("No refactor suggestion is pending", th2["messages"][0]["text"])
+        # a new model with new findings opens one too, once the hour has passed
+        store.reply(th2["id"], "Done.", "agent")
+        m["dependencies"].append({"from": "B", "to": "D", "weight": 1})
+        m["dependencies"].append({"from": "D", "to": "B", "weight": 1})
+        self.p.model_path.write_text(json.dumps(m))
+        self.assertIsNone(brief.auto_tick(self.p, store, t0 + 7500))
+        m["dependencies"].append({"from": "C", "to": "B", "weight": 1})
+        self.p.model_path.write_text(json.dumps(m))
+        th3 = brief.auto_tick(self.p, store, t0 + 7400 + 3601)
+        self.assertIn("new finding", th3["messages"][0]["text"])
+        self.assertIn("suggest-state.json", self.p.path(".gitignore").read_text())
+        brief.set_auto(self.p, False)
+        store.reply(th3["id"], "Done.", "agent")
+        m["dependencies"].append({"from": "D", "to": "B", "weight": 2})
+        self.assertIsNone(brief.auto_tick(self.p, store, t0 + 20000, enabled=True))
+
+    def test_api(self):
+        srv, url = serve_in_thread(self.p)
+        try:
+            st, d = call(url, "/api/suggest")
+            self.assertEqual((st, d["auto"], d["count"], d["open_request"]), (200, False, 3, None))
+            key = d["key"]
+            st, d = call(url, "/api/suggest", "POST", {"count": 2, "focus": ["A"], "note": "Cycles first."})
+            self.assertEqual((st, d["thread"]["anchor"], d["thread"]["messages"][0]["author"]), (200, "suggest", "human"))
+            self.assertIn("@[A](comp:A)", d["thread"]["messages"][0]["text"])
+            self.assertEqual(call(url, "/api/suggest")[1]["open_request"], d["thread"]["id"])
+            self.assertEqual(call(url, "/api/suggest", "POST", {"focus": ["nope"]})[0], 404)
+            self.assertEqual(call(url, "/api/suggest", "POST", {"count": 99})[0], 400)
+            st, d = call(url, "/api/suggest/auto", "PUT", {"on": True, "count": 4})
+            self.assertEqual((st, d["auto"], d["count"]), (200, True, 4))
+            self.assertNotEqual(d["key"], key)
+            self.assertEqual(call(url, "/api/suggest/auto", "PUT", {"on": "yes"})[0], 400)
+            st, d = call(url, "/api/brief?top=2&kinds=structure")
+            self.assertEqual((st, d["shown"], {o["kind"] for o in d["opportunities"]}), (200, 2, {"structure.cycle"}))
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()

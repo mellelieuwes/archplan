@@ -13,7 +13,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import handover, hotspots
+from . import brief, handover, hotspots
 from .architecture import Architecture, ArchitectureError
 from .findings import Findings
 from .vocab import Vocab
@@ -37,11 +37,11 @@ def changes(p: Project, store: Store) -> dict:
          "target_rev": st.get("target_rev", 0), "target_by": st.get("target_by"),
          "suggestions_version": Suggestions(p.dir).version(), "handover_version": Handovers(p.dir).version(),
          "architecture_etag": etag(p.path("architecture.json")), "findings_etag": etag(p.path("baseline.json")),
-         "vocabulary_etag": etag(p.path("vocabulary.json")),
+         "vocabulary_etag": etag(p.path("vocabulary.json")), "suggest_etag": etag(p.path("config.json")),
          "activity_etag": etag(p.path("activity.json"))}
     c["key"] = ".".join(str(c[k]) for k in ("version", "model_etag", "target_rev", "suggestions_version",
                                             "handover_version", "architecture_etag", "findings_etag", "vocabulary_etag",
-                                            "activity_etag"))
+                                            "suggest_etag", "activity_etag"))
     return c
 
 
@@ -114,6 +114,18 @@ def make_handler(p: Project, store: Store):
                 return True
             return False
 
+        def tick(self):
+            try:
+                brief.auto_tick(p, store)
+            except Exception as e:  # auto mode must never fail the request that triggered it
+                sys.stderr.write(f"archplan: auto suggest: {e}\n")
+
+        def tick_enabled(self):
+            try:
+                brief.auto_tick(p, store, enabled=True)
+            except Exception as e:
+                sys.stderr.write(f"archplan: auto suggest: {e}\n")
+
         def do_GET(self):
             if self.refuse():
                 return
@@ -171,6 +183,18 @@ def make_handler(p: Project, store: Store):
                     return self.send_json({"error": str(e).strip("'\"")}, HTTPStatus.NOT_FOUND)
                 except ValueError as e:
                     return self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+            if path == "/api/suggest":
+                return self.send_json({**brief.status(p, store), **changes(p, store)})
+            if path == "/api/brief":
+                try:
+                    lst = lambda k: [x for x in unquote(params[k]).split(",") if x] if params.get(k) else None
+                    with arch_lock:
+                        return self.send_json({**brief.brief(p, int(params.get("top") or 8), lst("focus"),
+                                                             lst("kinds"), store), **changes(p, store)})
+                except ArchitectureError as e:
+                    return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
+                except ValueError as e:
+                    return self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
             if path == "/api/suggestions":
                 return self.send_json({"suggestions": suggestions.newest(), **changes(p, store)})
             parts = path.strip("/").split("/")
@@ -216,12 +240,22 @@ def make_handler(p: Project, store: Store):
                 if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "messages":
                     return self.send_json(store.reply(parts[2], b.get("text", ""), b.get("author", "human"),
                                                       b.get("status"), b.get("kind"), b.get("options")))
-                if len(parts) == 4 and parts[:2] == ["api", "suggestions"] and parts[3] in ("accept", "reject"):
+                if len(parts) == 4 and parts[:2] == ["api", "suggestions"] and parts[3] in ("accept", "reject", "plan"):
                     idx = [] if parts[3] == "reject" else b.get("ops")
-                    if parts[3] == "accept" and idx is not None and (not isinstance(idx, list) or not idx):
+                    if parts[3] != "reject" and idx is not None and (not isinstance(idx, list) or not idx):
                         raise ValueError("ops must be a non-empty list of op indices; reject to accept none")
-                    sg = suggestions.decide(p, parts[2], idx)
-                    return self.send_json({"suggestion": sg, **changes(p, store)})
+                    if parts[3] == "plan":
+                        out = brief.plan(p, store, parts[2], idx)
+                    else:
+                        out = {"suggestion": suggestions.decide(p, parts[2], idx, b.get("reason"))}
+                    self.tick()
+                    return self.send_json({**out, **changes(p, store)})
+                if len(parts) == 4 and parts[:2] == ["api", "suggestions"] and parts[3] == "discuss":
+                    th, created = brief.discuss(p, store, parts[2], b.get("text"))
+                    return self.send_json({"thread": th, "created": created, **changes(p, store)})
+                if parts == ["api", "suggest"]:
+                    th = brief.request(p, store, b.get("count"), b.get("focus"), b.get("kinds"), b.get("note"))
+                    return self.send_json({"thread": th, **changes(p, store)})
                 if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "lock":
                     return self.send_json(handover.lock(store, parts[2], b.get("title", ""), b.get("summary", "")))
                 if len(parts) == 4 and parts[:2] == ["api", "threads"] and parts[3] == "unlock":
@@ -261,9 +295,11 @@ def make_handler(p: Project, store: Store):
                     if not export_lock.acquire(blocking=False):
                         return self.send_json({"error": "an export is already running"}, HTTPStatus.CONFLICT)
                     try:
-                        return self.send_json({"ok": True, "counts": p.export(require_trust=True), **changes(p, store)})
+                        n = p.export(require_trust=True)
                     finally:
                         export_lock.release()
+                    self.tick()
+                    return self.send_json({"ok": True, "counts": n, **changes(p, store)})
             except UntrustedExport as e:
                 return self.send_json({"error": str(e)}, HTTPStatus.FORBIDDEN)
             except ArchitectureError as e:
@@ -300,6 +336,11 @@ def make_handler(p: Project, store: Store):
                         return self.send_json({"profile": arch.save(b["profile"]), **changes(p, store)})
                 if parts == ["api", "refactors", "order"]:
                     return self.send_json({"refactors": handover.reorder(store, b.get("ids")), **changes(p, store)})
+                if parts == ["api", "suggest", "auto"]:
+                    brief.set_auto(p, b.get("on"), b.get("count"))
+                    if b.get("on"):
+                        self.tick_enabled()
+                    return self.send_json({**brief.status(p, store), **changes(p, store)})
             except NotFound as e:
                 return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
             except Conflict as e:
@@ -330,6 +371,22 @@ def draft_thread(p: Project, store: Store, components=None, note=None) -> dict:
     return store.create("glossary", "Draft glossaries", text, "human")
 
 
+AUTO_POLL = 15.0  # seconds between auto mode checks for model changes made outside the server
+
+
+def auto_loop(p: Project, store: Store) -> None:
+    """Auto mode for changes the server does not see itself: an export from a
+    terminal, or a suggestion decided through another process."""
+    import time
+    while True:
+        time.sleep(AUTO_POLL)
+        try:
+            if brief.settings(p)["auto"]:
+                brief.auto_tick(p, store)
+        except Exception as e:
+            sys.stderr.write(f"archplan: auto suggest: {e}\n")
+
+
 def free_port(host: str, start: int, tries: int = 20) -> int:
     for port in range(start, start + tries):
         with socket.socket() as s:
@@ -348,6 +405,7 @@ def serve(p: Project, host: str = "127.0.0.1", port: int | None = None) -> None:
     port = free_port(host, port or p.port)
     srv = ThreadingHTTPServer((host, port), make_handler(p, store))
     url = f"http://{host}:{port}/"
+    threading.Thread(target=auto_loop, args=(p, store), daemon=True).start()
     write_json(p.path("server.json"), {"url": url, "pid": os.getpid(), "port": port})
     print(f"archplan: {url}  ({p.root})", file=sys.stderr, flush=True)
     try:
