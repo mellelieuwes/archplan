@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import access as access_mod
 from . import ddl, django, ecto, prisma, rails
-from ..safeio import read_file, read_text
+from ..safeio import model_base, prefix_of, read_file, read_text
 from ..safeio import walk as safe_walk
 from .core import finish, merge_table
 
@@ -110,8 +110,10 @@ def read_sources(root: Path, sources: list, live: dict | None, model: dict) -> t
                 base = root / s.get("path", ".")
                 files = [str((base / f).relative_to(root)) for f in ecto.source_files(base)]
                 r = ecto.read_schemas(root, files)
-                mods = {tid: t["file"] for tid, t in (model.get("types") or {}).items()
-                        if isinstance(t, dict) and t.get("file")}
+                # type files are relative to the model's base; here paths are relative to root
+                pre = prefix_of(root, model_base(root, model))
+                mods = {tid: t["file"][len(pre):] for tid, t in (model.get("types") or {}).items()
+                        if isinstance(t, dict) and t.get("file") and t["file"].startswith(pre)}
                 ecto.resolve_pending(r, root, mods)
                 mig, n, latest = ecto.read_migrations(base)
                 s = {**s, "schemas": len(r["tables"])}
@@ -193,6 +195,12 @@ def build(root: Path, model: dict, sources: list | None = None, live: dict | Non
     tables, enums, raw_maps, used = read_sources(root, sources, live, model)
     if not tables:
         return None
+    # The sources give paths relative to root; the model's paths, and so the
+    # access scan, are relative to its base: the repository root when the
+    # project sits in a subfolder (mono/core has paths like core/lib/x.ex).
+    base = model_base(root, model)
+    pre = prefix_of(root, base)
+    raw_maps = {t: {**mp, "file": pre + mp["file"]} if mp.get("file") else mp for t, mp in raw_maps.items()}
     idx = type_index(model)
     maps = {}
     for table, mp in raw_maps.items():
@@ -209,7 +217,7 @@ def build(root: Path, model: dict, sources: list | None = None, live: dict | Non
         if comp:
             out["via"] = "type" if tid else "file"
         maps[table] = {**out, **{k: mp[k] for k in ("file", "line", "module", "class", "through") if k in mp}}
-    acc = access_mod.access(model, root, tables, maps, prisma=any(s["kind"] == "prisma" for s in used))
+    acc = access_mod.access(model, base, tables, maps, prisma=any(s["kind"] == "prisma" for s in used))
     access_mod.owners(maps, acc, tables)
     # the private keys used for access mapping stay out of the model
     clean = {t: {k: v for k, v in mp.items() if k in ("type", "component", "via", "through")}

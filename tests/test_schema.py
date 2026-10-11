@@ -839,3 +839,63 @@ class LiveReadOnlyTest(TempDir):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SubfolderTest(TempDir):
+    """A project in a subfolder of its git repository: the exporter writes
+    paths relative to the repository root (core/lib/...), the schema scan
+    reads files under the project root (lib/...)."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / ".git").mkdir()
+        self.core = self.root / "core"
+        write(self.core, {
+            "mix.exs": "defp deps, do: [{:ecto_sql, \"~> 3.0\"}]\n",
+            "lib/core/authentication/actor.ex": """\
+                defmodule Core.Authentication.Actor do
+                  use Ecto.Schema
+                  schema "actor" do
+                    field :name, :string
+                  end
+                end
+            """,
+            "lib/core/authentication/legacy.ex": """\
+                defmodule Core.Authentication.Legacy do
+                  use Ecto.Schema
+                  schema "legacy" do
+                    field :name, :string
+                  end
+                end
+            """,
+            "lib/core/authentication.ex": """\
+                defmodule Core.Authentication do
+                  alias Core.Repo
+                  alias Core.Authentication
+
+                  def obtain_actor(name) do
+                    Repo.one(Authentication.Actor, name: name)
+                  end
+                end
+            """,
+        })
+        auth = "core/lib/core/authentication"
+        self.model = {
+            "components": {"Core.Authentication": {"name": "Core.Authentication", "path": auth,
+                                                   "match": [f"{auth}.ex", f"{auth}/**"]}},
+            "types": {f"Core.Authentication.{n}": {"name": n, "component": "Core.Authentication",
+                                                   "file": f"{auth}/{n.lower()}.ex"} for n in ("Actor", "Legacy")},
+            "files": {f"{auth}.ex": {"component": "Core.Authentication",
+                                     "refs": [{"to": f"{auth}/actor.ex", "line": 5}]},
+                      f"{auth}/actor.ex": {"component": "Core.Authentication", "refs": []},
+                      f"{auth}/legacy.ex": {"component": "Core.Authentication", "refs": []}},
+        }
+
+    def test_access_through_alias(self):
+        sch = schema.build(self.core, self.model)
+        uses = {(a["table"], a["mode"]): a for a in sch["access"]}
+        self.assertEqual(uses[("actor", "orm")]["weight"], 2)  # its own file and authentication.ex
+        self.assertIn("core/lib/core/authentication.ex:5", uses[("actor", "orm")]["evidence"])
+        model = {**self.model, "schema": sch}
+        fs = data_orphan_table.run(Ctx(model), data_orphan_table.PARAMS)
+        self.assertEqual([f["evidence"]["table"] for f in fs], ["legacy"])
