@@ -702,6 +702,12 @@ class ArchitectureTest(unittest.TestCase):
         counts = {r["id"]: r["count"] for r in a["rules"]}
         self.assertEqual(counts, {"models-stay-low": 1, "apps-keep-views-private": 1, "serializers-not-views": 1})
 
+    def test_hostile_patterns(self):
+        from archplan.architecture import glob_match, pair_specs
+        self.assertFalse(glob_match("/".join(["a"] * 40), "/".join(["**", "a"] * 20) + "/b"))
+        self.assertTrue(glob_match("a", "a/**"))
+        self.assertEqual(pair_specs({"match": ["<stem><stem>.ex -> x"]}), [])
+
     def test_colors(self):
         from archplan import architecture as A
         bad = {"roles": [{"id": "x", "patterns": [], "color": '"/><script>'}]}

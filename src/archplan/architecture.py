@@ -63,15 +63,25 @@ class ArchitectureError(ProjectError):
 
 def glob_match(path: str, pattern: str) -> bool:
     """Match path against a glob, one folder at a time; ** spans folders."""
-    return _match(path.split("/"), pattern.strip("/").split("/"))
-
-
-def _match(parts: list, pats: list) -> bool:
-    if not pats:
-        return not parts
-    if pats[0] == "**":
-        return any(_match(parts[i:], pats[1:]) for i in range(len(parts) + 1))
-    return bool(parts) and fnmatch.fnmatchcase(parts[0], pats[0]) and _match(parts[1:], pats[1:])
+    parts, pats = path.split("/"), []
+    for x in pattern.strip("/").split("/"):
+        if not (x == "**" and pats and pats[-1] == "**"):  # ** ** is the same as **
+            pats.append(x)
+    # Patterns come from the committed profile, so match in polynomial time:
+    # ok[j] says whether parts[i:] matches pats[j:], filled from the end.
+    n, m = len(parts), len(pats)
+    nxt = [True] * (m + 1)  # i == n: only trailing ** match nothing
+    for j in range(m - 1, -1, -1):
+        nxt[j] = pats[j] == "**" and nxt[j + 1]
+    for i in range(n - 1, -1, -1):
+        ok = [False] * (m + 1)
+        for j in range(m - 1, -1, -1):
+            if pats[j] == "**":
+                ok[j] = ok[j + 1] or nxt[j]
+            else:
+                ok[j] = nxt[j + 1] and fnmatch.fnmatchcase(parts[i], pats[j])
+        nxt = ok
+    return nxt[0]
 
 
 def literal(pattern: str) -> int:
@@ -255,7 +265,7 @@ def pair_specs(rule) -> list:
     for m in as_list(rule.get("match")):
         left, _, right = m.partition("->")
         left, right = left.strip(), right.strip()
-        if "<stem>" not in left or not right:
+        if left.count("<stem>") != 1 or not right:  # one stem: a single group, linear matching
             continue
         rx = re.compile("^" + re.escape(left).replace(re.escape("<stem>"), "(?P<stem>.+)") + "$")
         out.append((rx, right))
