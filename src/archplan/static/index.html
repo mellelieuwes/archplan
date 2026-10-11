@@ -236,13 +236,19 @@ ul.breaks{margin:4px 0 8px;padding-left:18px;font-size:13px;max-height:260px;ove
 .layer{border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:4px 0}.layer.over{border-color:var(--acc);background:var(--sel)}.layer.un{border-style:dashed}
 .lh2{display:flex;gap:8px;align-items:center;font-size:13.5px}.lchip{font-size:12.5px}.lchip[draggable=true]{cursor:grab}
 .rchip{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;border:1px solid var(--line);border-radius:999px;padding:1px 8px}.rchip i{width:8px;height:8px;border-radius:2px}.rchip.miss{border-style:dashed;color:var(--mute)}.rchip.miss i{opacity:.35}
+.seg button .pill{padding:0 6px;font-size:11.5px;margin-left:3px}
+.find{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}.find.on{border-color:var(--acc)!important;box-shadow:0 0 0 2px var(--sel)}.find.base{opacity:.72}
+.find .ft{font-weight:600;margin:4px 0 2px}.fk{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}.fk i{width:8px;height:8px;border-radius:50%}
+.fsm{font-size:12.5px}.fev{list-style:none;margin:4px 0 0;padding:0;font-size:12.5px}.fev li{padding:1px 0}.fkv{font-size:12.5px;margin-top:4px;overflow-wrap:anywhere}
+.fld{display:inline-block;font:12px ui-monospace,Menlo,monospace;color:#0f172a;border-radius:4px;padding:0 6px;margin:3px 4px 0 0}
+.fbox{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0}.fev-box{border:1px solid var(--line);border-radius:6px;padding:6px 9px;background:var(--bg)}
 </style>
 </head>
 <body>
 <header>
   <div class="brand">archplan</div><span class="proj" id="proj">demo</span><span class="mono" id="repo"></span>
   <div class="spacer"></div>
-  <div class="seg" id="leftModes" hidden title="What the left column shows"><button data-left="plan">Plan</button><button data-left="arch">Architecture</button></div>
+  <div class="seg" id="leftModes" hidden title="What the left column shows"><button data-left="plan">Plan</button><button data-left="arch">Architecture</button><button data-left="find">Findings <span class="pill rem" id="findN" hidden></span></button></div>
   <div class="spacer"></div>
   <button class="pill agent" id="agentPill" hidden title="What Claude did last"></button>
   <button class="pill warn" id="sugPill" hidden title="Show the first suggestion"></button>
@@ -280,6 +286,8 @@ ul.breaks{margin:4px 0 8px;padding-left:18px;font-size:13px;max-height:260px;ove
   <h3>Architecture</h3>
   <p>When the project has an architecture profile, the header shows <i>Plan</i> and <i>Architecture</i>. The profile says what a unit is (for example a system or a Django app), which roles its files have (recognised by file name patterns), the rules between roles and the layers. archplan proposes a profile from the code. Edit it, then lock it in. After that, every export is checked against it. Click a rule to see where it breaks.</p>
   <p>The <i>Roles</i> view shows one unit with its files in lanes per role. A dashed box is a role the unit lacks. A red dashed line is a rule break. <i>Compare with</i> shows a second unit below it. Double-click a unit in the Components view to open it here. The <i>Conformance</i> overlay colours each unit by how well it follows the profile.</p>
+  <h3>Findings</h3>
+  <p><i>Findings</i> in the header lists what the checks found in the code: rule breaks, cycles, upward dependencies, leaking terms, field clusters, likely synonyms and files that change together. The pill counts new findings. Click a finding to see it in the diagram. <i>Discuss</i> starts a discussion with the evidence attached. <i>Dismiss</i> asks for a reason. <i>Accept as is</i> adds it to the baseline. <span class="mono">archplan check</span> reports only findings outside the baseline.</p>
   <h3 id="keys">Keyboard shortcuts</h3>
   <table>
     <tr><td><kbd>⌘K</kbd></td><td>Search components, types, tasks and actions</td></tr>
@@ -575,6 +583,7 @@ async function pollThreads() {
       if (d.activity_etag !== known.actEtag) { known.actEtag = d.activity_etag; loadActivity(); }
       if (d.handover_version !== known.hoVer) { known.hoVer = d.handover_version; loadHandover(); }
       if ((d.architecture_version ?? d.architecture_etag) !== known.archVer) { known.archVer = d.architecture_version ?? d.architecture_etag; loadArch(); }
+      if ((d.findings_version ?? d.findings_etag) !== known.findVer) { known.findVer = d.findings_version ?? d.findings_etag; loadFindings(); }
     } catch { await new Promise(r => setTimeout(r, 3000)); }
   }
 }
@@ -801,7 +810,7 @@ function glossaryMD(m, c) {
   owned.forEach(([, k]) => L.push(`**${k.name}**: ${k.definition || '(no definition yet)'}`, ''));
   return L.join('\n').trimEnd() + '\n';
 }
-const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const plural = (n, w) => `${esc(n)} ${w}${n === 1 ? '' : 's'}`;
 
 // ---------- diff ----------
 function diffModels(a, b) {
@@ -925,6 +934,7 @@ function anchorLabel(k) {
   if (kind === 'type') return qname(toBe.types[x] ? toBe : asIs, x);
   if (kind === 'comp') return 'component ' + cname(toBe, x);
   if (kind === 'file') return 'file ' + r.join(':');
+  if (kind === 'finding') { const f = findById(r.join(':')); return f ? 'finding: ' + (f.title || f.id) : 'finding ' + r.join(':'); }
   if (kind === 'concept') return 'concept ' + conceptName(toBe, x);
   if (kind === 'leak') return `leak: ${cname(toBe, x)} uses ${conceptName(toBe, y)} terms`;
   if (kind === 'cedge') { const [f, t] = r.join(':').split('->'); return `dependency ${cname(toBe, f)} → ${cname(toBe, t)}`; }
@@ -1584,6 +1594,8 @@ const cy = cytoscape({
     {selector: 'edge.sugg', style: {'line-color': '#16a34a', 'target-arrow-color': '#16a34a', 'line-style': 'dashed', 'width': 3}},
     {selector: 'edge.sugg.removed', style: {'line-color': '#dc2626', 'target-arrow-color': '#dc2626'}},
     {selector: '.hl', style: {'overlay-color': '#7c3aed', 'overlay-opacity': 0.25, 'overlay-padding': 9}},
+    {selector: 'node.fhi', style: {'border-color': '#dc2626', 'border-width': 3}},
+    {selector: 'edge.fhi', style: {'line-color': '#dc2626', 'target-arrow-color': '#dc2626', 'source-arrow-color': '#dc2626', 'width': 3.5, 'opacity': 1}},
   ],
 });
 
@@ -2133,6 +2145,7 @@ function applySel() {
   cy.elements().removeClass('sel msel');
   const mp = {type: 't:', comp: 'c:', tedge: 'e:', cedge: 'ce:', concept: 'k:'};
   for (const a of multi) { const [k, ...r] = a.split(':'), id = r.join(':'); if (mp[k]) { cy.getElementById(mp[k] + id).addClass('msel'); if (k === 'cedge') cy.getElementById('r:' + id).addClass('msel'); } }
+  fhiApply();
   if (!sel) return;
   const pre = {type: 't:', comp: 'c:', tedge: 'e:', cedge: 'ce:', concept: 'k:', pair: 'cc:'}[sel.kind];
   if (pre) { cy.getElementById(pre + sel.id).addClass('sel'); if (sel.kind === 'cedge') cy.getElementById('r:' + sel.id).addClass('sel'); }
@@ -2409,7 +2422,7 @@ function threadHTML(t, withLink, inCard) {
   const msgs = t.messages.map((m, i) => `<div class="msg${m.kind === 'decision' ? ' decision' : ''}"><span class="who ${m.author === 'agent' ? 'agent' : 'human'}">${m.author === 'agent' ? 'Claude' : 'you'}</span>${tag(m)}<span class="when">${esc((m.at || '').replace('T', ' ').slice(0, 16))}</span><div class="body">${md(m.text)}</div>${choices(m, i)}</div>`).join('');
   return `<div class="thread ${t.status}${nd ? ' needs-' + nd : ''}" id="th-${esc(t.id)}"><div class="th-h">${withLink ? `<a data-act="thread.goto" data-key="${esc(t.anchor)}">${esc(t.label || t.anchor)}</a>` : ''}<div class="spacer"></div>
       ${t.status === 'planned' ? `<span class="wait plan">${stack().includes(t) ? `planned refactor ${stack().indexOf(t) + 1}` : 'refactor done'}</span>` : nd === 'decision' ? '<span class="wait human">decide</span>' : nd === 'feedback' ? '<span class="wait fb">read</span>' : w === 'agent' ? '<span class="wait agent">waiting on Claude</span>' : '<span class="wait">resolved</span>'}</div>
-    ${t.snapshot ? snapHTML(t) : ''}
+    ${t.anchor?.startsWith('finding:') ? findBox(t) : ''}${t.snapshot ? snapHTML(t) : ''}
     ${msgs}
     ${t.status === 'open' ? pending().filter(s => s.thread === t.id).map(sugCard).join('') : ''}
     ${t.status === 'resolved' ? `<div class="row"><button class="btn" data-act="thread.reopen" data-id="${t.id}">Reopen</button></div>`
@@ -2936,7 +2949,7 @@ $('hoDlg').addEventListener('click', async e => {
 $('hoDlg').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); $('hoDlg').hidden = true; } });
 $('sendBtn').addEventListener('click', hoDialog);
 // Keep what the user types in the lock-in and edit forms across live updates.
-$('panel').addEventListener('input', e => { if (/^(lk|rfe|ar)-/.test(e.target.id)) drafts[e.target.id] = e.target.value; });
+$('panel').addEventListener('input', e => { if (/^(lk|rfe|ar|fd)-/.test(e.target.id)) drafts[e.target.id] = e.target.value; });
 const clearDrafts = pre => Object.keys(drafts).filter(k => k.startsWith(pre)).forEach(k => delete drafts[k]);
 // Drag cards to reorder the stack; drag chips between the batches of a proposal.
 $('panel').addEventListener('dragstart', e => {
@@ -3007,7 +3020,7 @@ let ARCH = null, leftMode = localStorage.getItem('archplan.left') || 'plan', rul
 let rolesDims = {W: 0, H: 0};
 const RVP = {u: null, z: 1, x: 0, y: 0}, rTf = () => `matrix(${RVP.z},0,0,${RVP.z},${RVP.x},${RVP.y})`;
 const ROLE_COLORS = ['#2563eb', '#0891b2', '#7c3aed', '#db2777', '#16a34a', '#65a30d', '#d97706', '#64748b', '#dc2626', '#0d9488'];
-const homePage = () => leftMode === 'arch' && ARCH ? 'arch' : 'plan';
+const homePage = () => leftMode === 'arch' && ARCH ? 'arch' : leftMode === 'find' && FIND ? 'find' : 'plan';
 const archAn = () => ARCH?.analysis || {};
 const archUnits = () => archAn().units || [];
 const archProfile = () => ARCH?.profile || ARCH?.proposal || null;
@@ -3043,7 +3056,8 @@ async function loadArch() {
 }
 function setLeft(m) {
   leftMode = m; localStorage.setItem('archplan.left', m);
-  sel = null; multi = []; page = homePage();
+  if (m !== 'find' && findOn) { findOn = null; FHI = {nodes: new Set(), edges: new Set()}; }
+  sel = null; multi = []; page = homePage(); renderHeader();
   if (view === 'seq') renderSeq(); else applySel();
   renderSide(); $('panel').scrollTop = 0;
 }
@@ -3153,7 +3167,7 @@ function renderRoles() {
   s += breaksSVG(us, pos);
   rolesDims = {W, H: y - 36};
   el.innerHTML = `<svg width="100%" height="100%" style="display:block" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"><defs><marker id="rArr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="#dc2626"/></marker></defs><g id="rolesRoot" transform="${rTf()}">${s}</g></svg>`;
-  const key = us.map(u => u.id).join('|') + (archHi ? '#' + archHi.from + '>' + archHi.to : '');
+  const key = us.map(u => u.id).join('|') + (archHi ? '#' + archHi.from + '>' + archHi.to + (archHi.files || []).join(',') : '');
   if (RVP.u !== key) {
     RVP.u = key; navFit();
     const b = archHi && pos[archHi.from];
@@ -3175,7 +3189,7 @@ function unitSVG(u, x0, y0, P, pos) {
     s += `<rect x="${x}" y="${y}" width="${LW}" height="${h - 40}" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>${l.cont ? '' : `<rect x="${x + 10}" y="${y + 11}" width="10" height="10" rx="2" fill="${esc(l.color)}"/>`}<text x="${x + 26}" y="${y + 20}" font-size="13" font-weight="600" fill="#334155">${esc(trunc(l.name, 19))}</text>`;
     if (!l.files.length && l.id) s += `<rect x="${x + 8}" y="${y + HH}" width="${LW - 16}" height="${BH}" rx="5" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="${x + 14}" y="${y + HH + 17}" font-size="12" font-style="italic" fill="#64748b">${esc(trunc('no ' + l.pat.replace(/^\*/, ''), 23))}</text>`;
     l.files.forEach((f, j) => {
-      const by = y + HH + j * (BH + G), on = sel?.kind === 'file' && sel.id === f.path, hi = archHi && (archHi.from === f.path || archHi.to === f.path);
+      const by = y + HH + j * (BH + G), on = sel?.kind === 'file' && sel.id === f.path, hi = archHi && (archHi.from === f.path || archHi.to === f.path || (archHi.files || []).includes(f.path));
       pos[f.path] = {x: x + 8, y: by, w: LW - 16, h: BH, u: u.id};
       s += `<g data-file="${esc(f.path)}" data-unit="${esc(u.id)}" style="cursor:pointer"><title>${esc(f.path)}</title><rect x="${x + 8}" y="${by}" width="${LW - 16}" height="${BH}" rx="5" fill="${hi ? '#fef2f2' : '#fff'}" stroke="${on ? '#2563eb' : hi ? '#dc2626' : '#cbd5e1'}" stroke-width="${on || hi ? 2 : 1}"/><rect x="${x + 8}" y="${by}" width="4" height="${BH}" rx="2" fill="${esc(l.color)}"/><text x="${x + 18}" y="${by + 17}" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#0f172a">${esc(trunc(baseName(f.path), 20))}</text></g>`;
     });
@@ -3269,6 +3283,156 @@ Object.assign(actions, {
   'arch.unassign': e => moveToLayer(e.dataset.c, -1),
   'arch.assign': () => { const c = val('al-comp'); if (c) moveToLayer(c, +val('al-layer')); },
 });
+// ---------- findings ----------
+// Findings from GET /api/findings: problems the checks found in the code, with a
+// baseline of accepted and dismissed ones. Without that endpoint the mode stays hidden.
+let FIND = null, findGroup = 'all', findBase = false, findDis = null, findOn = null;
+let FHI = {nodes: new Set(), edges: new Set()};
+const FGROUPS = [['profile', 'Profile'], ['structure', 'Structure'], ['layers', 'Layers'], ['vocabulary', 'Vocabulary'], ['types', 'Types'], ['history', 'History']];
+const FCOL = {profile: ['var(--rem)', 'var(--rem-ink)'], structure: ['var(--chg)', 'var(--warn-ink)'], layers: ['var(--acc)', 'var(--sel-ink)'], vocabulary: ['var(--agent)', 'var(--agent-ink)'], types: ['var(--mute)', 'var(--ink)'], history: ['var(--mute)', 'var(--ink)']};
+const FKIND = {'profile.rule': 'call rule', 'profile.pair': 'missing pair', 'structure.cycle': 'cycle', 'layers.upward': 'upward dependency', 'vocabulary.leak': 'leak', 'vocabulary.synonyms': 'synonyms', 'types.fields': 'field clusters', 'types.synonyms': 'synonyms', 'history.coupling': 'changes together'};
+const FLDBG = ['#fef3c7', '#e0e7ff', '#dcfce7', '#fce7f3', '#e0f2fe', '#f1f5f9'];
+const findings = () => FIND?.findings || [];
+const findById = id => findings().find(f => f.id === id);
+const fGroup = f => f.group || (f.kind || '').split('.')[0];
+const findNew = () => FIND?.counts?.new ?? findings().filter(f => f.state === 'new').length;
+const kindLabel = f => `${(FGROUPS.find(g => g[0] === fGroup(f)) || [, fGroup(f)])[1]} · ${FKIND[f.kind] || (f.kind || '').split('.').slice(1).join(' ') || 'finding'}`;
+const cn = id => toBe.components[id] || asIs.components[id] ? cname(toBe.components[id] ? toBe : asIs, id) : String(id);
+const tn = id => toBe.types[id] || asIs.types[id] ? qname(toBe.types[id] ? toBe : asIs, id) : String(id);
+async function loadFindings() {
+  if (!collab) return;
+  let d = null;
+  try { d = await api('GET', '/api/findings'); } catch { d = null; }
+  FIND = d && Array.isArray(d.findings) ? d : null;
+  if (!FIND && page === 'find') page = homePage();
+  if (D) { renderHeader(); if (!sel && !multi.length && page === 'plan' && leftMode === 'find' && FIND) page = 'find'; renderSide(); }
+}
+async function findCall(id, what, body, label) {
+  try { const r = await api('POST', `/api/findings/${encodeURIComponent(id)}/${what}`, body); await loadFindings(); return r; }
+  catch (err) { toast(`Could not ${label}: ${err.message}`); }
+}
+// Compact evidence, per kind; anything else as key/value pairs.
+const fileTo = (a, b) => `<li class="mono"><span title="${esc(a || '')}">${esc(baseName(a))}</span>${b ? ` → <span title="${esc(b)}">${esc(baseName(b))}</span>` : ''}</li>`;
+const more = (n, k) => n > k ? `<li class="mute">… ${n - k} more</li>` : '';
+const fld = (t, i) => `<span class="fld" style="background:${FLDBG[i % FLDBG.length]}">${esc(t)}</span>`;
+function evShort(v) {
+  if (v == null) return '';
+  if (Array.isArray(v)) return v.length > 6 ? `${v.slice(0, 6).map(evShort).join(', ')}, … (${v.length})` : v.map(evShort).join(', ');
+  if (typeof v === 'object') { const s = Object.entries(v).map(([k, x]) => `${k}: ${evShort(x)}`).join(', '); return s.length > 140 ? s.slice(0, 139) + '…' : s; }
+  return String(v);
+}
+function evHTML(f, full) {
+  let e = f.evidence || {}; const k = f.kind || '', N = full ? 12 : 4;
+  if (k === 'profile.rule' && e.breaks) return `<ul class="fev">${e.breaks.slice(0, N).map(b => fileTo(b.from, b.to)).join('')}${more(e.breaks.length, N)}</ul>`;
+  if (k === 'profile.pair' && e.missing) return `<ul class="fev">${e.missing.slice(0, N).map(m => `<li><span class="mono">${esc(baseName(m.file))}</span> <span class="mute">needs ${esc(m.needs)}</span></li>`).join('')}${more(e.missing.length, N)}</ul>`;
+  if (k === 'structure.cycle' && e.cycle) {
+    const c = e.cycle, cut = e.cut;
+    return `${full || !/→/.test(f.title || '') ? `<div><b>${c.map(cn).map(esc).join(' → ')} → ${esc(cn(c[0]))}</b></div>` : ''}${cut ? `<div class="mute fsm">Cheapest cut: ${esc(cn(cut.from))} → ${esc(cn(cut.to))}${cut.weight != null ? `, ${plural(cut.weight, 'reference')}` : ''}.</div>` : ''}`;
+  }
+  if (k === 'layers.upward') {
+    const ed = Array.isArray(e.edges) ? e.edges : [];
+    return `<div class="fsm">${esc(e.from_layer || '?')} → ${esc(e.to_layer || '?')}${typeof e.edges === 'number' ? ` · ${e.edges + (e.edges === 1 ? ' dependency' : ' dependencies')}` : ''}</div>${ed.length ? `<ul class="fev">${ed.slice(0, N).map(x => `<li>${Array.isArray(x) ? `${esc(cn(x[0]))} → ${esc(cn(x[1]))}` : x && typeof x === 'object' ? `${esc(cn(x.from))} → ${esc(cn(x.to))}` : esc(x)}</li>`).join('')}${more(ed.length, N)}</ul>` : ''}`;
+  }
+  if (k === 'types.fields' && (e.groups || e.flags)) {
+    // The server sends groups as {prefix: [fields]} and flags as booleans; both shapes are accepted.
+    const gs = Array.isArray(e.groups) ? e.groups : Object.entries(e.groups || {}).map(([prefix, fields]) => ({prefix, fields}));
+    if (e.booleans == null && e.flags) e = {...e, booleans: e.flags};
+    return `<div>${gs.map((g, i) => full && Array.isArray(g.fields) ? g.fields.map(x => fld(typeof x === 'string' ? x : x.name, i)).join('') : fld(`${g.prefix}* ×${Array.isArray(g.fields) ? g.fields.length : esc(g.fields ?? g.count ?? '?')}`, i)).join('')}${e.booleans ? ` <span class="mute fsm">· ${plural(Array.isArray(e.booleans) ? e.booleans.length : e.booleans, 'boolean flag')}</span>` : ''}</div>`;
+  }
+  if (/synonyms$/.test(k) && (e.types || e.shared)) {
+    const sh = Array.isArray(e.shared) ? e.shared : [];
+    return `<div>${(e.types || []).map(t => `<span class="fld" style="background:var(--soft)">${esc(tn(t))}</span>`).join('')}</div>${sh.length ? `<div class="mute fsm">Shared: ${esc(sh.slice(0, full ? 30 : 6).join(', '))}${sh.length > (full ? 30 : 6) ? ', …' : ''}</div>` : ''}`;
+  }
+  if (k === 'history.coupling' && e.count == null && e.together != null) e = {...e, count: e.together};
+  if (k === 'history.coupling' && (e.count != null || e.degree != null)) return `<div class="mute fsm">${e.count != null ? `Changed together in ${plural(e.count, 'commit')}` : ''}${e.degree != null ? `${e.count != null ? ', ' : ''}${typeof e.degree === 'number' && e.degree <= 1 ? Math.round(e.degree * 100) + '%' : esc(e.degree)} of the time` : ''}.</div>`;
+  const kv = Object.entries(e).filter(([, v]) => v != null && v !== '');
+  return kv.length ? `<div class="fkv">${kv.slice(0, full ? 20 : 5).map(([a, v]) => `<span class="mute">${esc(a.replace(/_/g, ' '))}</span> ${esc(evShort(v))}`).join('<br>')}</div>` : '';
+}
+function findCard(f) {
+  const ev = evHTML(f);  // the evidence repeats the detail text, so show the detail only without it
+  const [c1, c2] = FCOL[fGroup(f)] || FCOL.types, base = f.state !== 'new', th = f.thread && threads.find(t => t.id === f.thread);
+  const acts = base
+    ? `<span class="pill ${f.state === 'accepted' ? 'add' : ''}">${esc(f.state)}</span>${f.reason ? `<span class="mute fsm" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.reason)}">${esc(f.reason)}</span>` : '<span class="spacer"></span>'}<button class="btn" data-act="find.reopen" data-id="${esc(f.id)}">Reopen</button>`
+    : findDis === f.id
+    ? `<input id="fd-${esc(f.id)}" value="${esc(draft('fd-' + f.id, ''))}" placeholder="Why? For example: intended, generated code" style="flex:1"><button class="btn primary" data-act="find.dismiss" data-id="${esc(f.id)}">Dismiss</button><button class="btn" data-act="find.discancel">Cancel</button>`
+    : `<span class="spacer"></span>${f.thread ? `<button class="linkb" data-act="find.thread" data-id="${esc(f.thread)}">In discussion${th && th.status !== 'open' ? ` (${esc(th.status)})` : ''}</button>` : `<button class="btn" data-act="find.discuss" data-id="${esc(f.id)}">Discuss</button>`}<button class="btn ghost" data-act="find.dis" data-id="${esc(f.id)}">Dismiss…</button><button class="btn ghost" data-act="find.accept" data-id="${esc(f.id)}" title="Add it to the baseline: archplan check stops reporting it">Accept as is</button>`;
+  return `<div class="find${findOn === f.id ? ' on' : ''}${base ? ' base' : ''}" id="fi-${esc(f.id)}" style="${fGroup(f) === 'profile' && !base ? 'border-color:var(--rem-line,#fecaca)' : ''}">
+    <div data-act="find.focus" data-id="${esc(f.id)}" title="Show it in the diagram" style="cursor:pointer">
+      <div class="row" style="margin:0;gap:8px"><span class="fk" style="color:${c2}"><i style="background:${c1}"></i>${esc(kindLabel(f))}</span><span class="spacer"></span>${f.label ? `<span class="pill agent" title="Claude's judgement, not a verdict">Claude: ${esc(f.label)}</span>` : ''}${f.strength || f.basis ? `<span class="mute fsm">${esc([f.strength, f.basis].filter(Boolean).join(' · '))}</span>` : ''}</div>
+      <div class="ft">${esc(f.title || f.id)}</div>${ev ? '' : f.detail ? `<div class="fsm" style="color:var(--mute)">${esc(f.detail)}</div>` : ''}
+      ${ev}</div>
+    <div class="row fsm" style="margin:6px 0 0;gap:6px">${acts}</div></div>`;
+}
+function findPage() {
+  const all = findings(), base = all.filter(f => f.state !== 'new'), byG = FIND.counts?.by_group;
+  const nw = all.filter(f => f.state === 'new'), pool = findBase ? all : nw;
+  const cnt = g => g === 'all' ? pool.length : findBase || !byG ? pool.filter(f => fGroup(f) === g).length : byG[g] ?? pool.filter(f => fGroup(f) === g).length;
+  const list = pool.filter(f => findGroup === 'all' || fGroup(f) === findGroup).sort((a, b) => (a.state !== 'new') - (b.state !== 'new'));
+  const nA = FIND.counts?.accepted ?? base.filter(f => f.state === 'accepted').length, nD = FIND.counts?.dismissed ?? base.filter(f => f.state === 'dismissed').length;
+  const chip = (g, l) => `<button class="pill${findGroup === g ? ' acc' : ''}" data-act="find.group" data-g="${g}"${g !== 'all' && !cnt(g) ? ' style="opacity:.55"' : ''}>${l} ${cnt(g)}</button>`;
+  return `<div class="doc-title">Findings</div>
+    <p class="mute" style="margin:4px 0 10px">What the checks found in the code. Discuss one with Claude, dismiss it with a reason, or accept it as is. Accepted and dismissed findings form the baseline: <span class="mono">archplan check</span> reports only new ones.</p>
+    <div class="row" style="gap:5px;flex-wrap:wrap;margin-bottom:6px">${chip('all', 'All')}${FGROUPS.map(([g, l]) => chip(g, l)).join('')}</div>
+    <div class="row fsm" style="margin:0 0 10px"><span class="mute">Baseline: ${nA} accepted · ${nD} dismissed</span>${nA + nD ? `<button class="linkb" data-act="find.base">${findBase ? 'Hide them' : 'Show them'}</button>` : ''}</div>
+    ${list.map(findCard).join('') || `<div class="empty">${all.length ? 'No findings here.' : 'No findings. The code passes every check.'}</div>`}`;
+}
+// Show a finding in the diagram: a unit in the Roles view, a cycle with its
+// edges, or else its components in the Components view.
+function focusFinding(f) {
+  findOn = f.id; FHI = {nodes: new Set(), edges: new Set()};
+  const files = [...new Set([...(f.files || []), ...((f.evidence?.breaks || []).flatMap(b => [b.from, b.to])), ...((f.evidence?.missing || []).map(m => m.file))])].filter(Boolean);
+  if (f.unit && unitById(f.unit)) { showUnit(f.unit, {from: files[0] || null, to: null, files}); return renderSide(); }
+  const cyc = f.kind === 'structure.cycle' ? f.evidence?.cycle || [] : [];
+  const comps = [...new Set([...(f.components || []), ...cyc])].filter(c => toBe.components[c] || asIs.components[c]);
+  cyc.forEach((c, i) => FHI.edges.add(`${c}->${cyc[(i + 1) % cyc.length]}`));
+  comps.forEach(c => FHI.nodes.add(c));
+  if (!comps.length) { renderSide(); return toast('This finding names no component in the model.'); }
+  view = 'components'; sel = null; multi = [];
+  setFocus(comps);
+  const hn = cy.nodes('.fhi'); if (hn.length) { cy.fit(hn.union(cy.edges('.fhi')), 70); zoomReadout(); }
+  renderSide();
+}
+function fhiApply() {
+  cy.elements('.fhi').removeClass('fhi');
+  if (view !== 'components') return;
+  FHI.nodes.forEach(c => cy.getElementById('c:' + c).addClass('fhi'));
+  FHI.edges.forEach(k => { cy.getElementById('ce:' + k).addClass('fhi'); cy.getElementById('r:' + k).addClass('fhi'); });
+}
+function openThread(id) {
+  if (leftMode !== 'plan') { leftMode = 'plan'; localStorage.setItem('archplan.left', 'plan'); }
+  sel = null; multi = []; page = 'plan'; renderSide();
+  const el = $('th-' + id); if (!el) return;
+  const d = el.closest('details'); if (d && !d.open) d.open = true;
+  flash(el);
+}
+// The evidence box on a thread that started from a finding (E3).
+function findBox(t) {
+  const id = t.anchor.slice(8), f = findById(id);
+  if (!f) return `<div class="fbox"><span class="pill">from finding</span> <span class="mute fsm">${esc(id)}</span></div>`;
+  return `<div class="fbox"><div class="row" style="margin:0 0 6px;gap:6px"><span class="pill">from finding</span><span class="fk mute">${esc(kindLabel(f))}</span><span class="spacer"></span><button class="linkb" data-act="find.show" data-id="${esc(f.id)}">Show</button></div>
+    <div class="fev-box"><div class="ft" style="font-size:13px">${esc(f.title || f.id)}</div>${evHTML(f, true)}${f.detail ? `<div class="mute fsm" style="margin-top:4px">${esc(f.detail)}</div>` : ''}</div></div>`;
+}
+Object.assign(actions, {
+  'find.group': e => { findGroup = e.dataset.g; renderSide(); },
+  'find.base': () => { findBase = !findBase; renderSide(); },
+  'find.focus': e => { const f = findById(e.dataset.id); if (f) focusFinding(f); },
+  'find.show': e => { const f = findById(e.dataset.id); if (!f) return; leftMode = 'find'; localStorage.setItem('archplan.left', 'find'); sel = null; multi = []; page = 'find'; findGroup = 'all'; if (f.state !== 'new') findBase = true; focusFinding(f); flash($('fi-' + f.id)); },
+  'find.dis': e => { findDis = e.dataset.id; renderSide(); $('fd-' + findDis)?.focus(); },
+  'find.discancel': () => { clearDrafts('fd-'); findDis = null; renderSide(); },
+  'find.dismiss': async e => {
+    const id = e.dataset.id, reason = val('fd-' + id); if (!reason) { toast('Give a reason, so the baseline explains itself.'); return $('fd-' + id)?.focus(); }
+    clearDrafts('fd-'); findDis = null; await findCall(id, 'dismiss', {reason}, 'dismiss the finding');
+  },
+  'find.accept': e => findCall(e.dataset.id, 'accept', {}, 'accept the finding'),
+  'find.reopen': e => findCall(e.dataset.id, 'reopen', undefined, 'reopen the finding'),
+  'find.discuss': async e => {
+    const r = await findCall(e.dataset.id, 'discuss', {}, 'start a discussion'); if (!r) return;
+    await syncThreads();
+    const tid = r.thread?.id || r.id || findById(e.dataset.id)?.thread;
+    if (tid) openThread(tid);
+  },
+  'find.thread': e => openThread(e.dataset.id),
+});
 $('panel').addEventListener('click', e => {
   const mn = e.target.closest('.mention'); if (mn) { e.preventDefault(); return gotoMention(mn.dataset.anchor); }
   const sn = e.target.closest('.snap'); if (sn && !e.target.closest('[data-act]')) return actions['snap.open'](sn);
@@ -3316,6 +3480,7 @@ function gotoAnchor(key) {
   }
   const [k, ...r] = key.split(':'), x = r[0];
   if (k === 'task' || k === 'step') return showTask(r.join(':').split('#')[0], key);
+  if (k === 'finding') return findById(r.join(':')) ? actions['find.show']({dataset: {id: r.join(':')}}) : toast('That finding is no longer reported.');
   if (k === 'type') { view = 'types'; sel = {kind: 'type', id: x}; const c = (toBe.types[x] || asIs.types[x])?.comp; if (c && !visibleTypes()?.ids.has(x)) focus.add(c); }
   else if (k === 'comp') { view = view === 'glossary' ? 'glossary' : 'components'; sel = {kind: 'comp', id: x}; }
   else if (k === 'concept') { view = 'glossary'; sel = {kind: 'concept', id: x}; }
@@ -3375,7 +3540,7 @@ function itemPage() {
   if (sel.kind === 'pair') return body;
   const sec = sel.kind === 'comp' && view === 'glossary' ? 'Glossary' : SEC_OF[sel.kind] || '';
   const label = anchorLabel(anchorOf(sel)).replace(/^component /, '');
-  return `<div class="crumb" style="display:flex;gap:6px"><span><a data-act="page.plan">${page === 'arch' || (leftMode === 'arch' && ARCH) ? 'Architecture' : 'Plan'}</a> › ${esc(sec)} › <span style="color:var(--ink)">${esc(label)}</span></span><span class="spacer"></span><button class="linkb" data-act="page.comment">Comment</button></div>` + body;
+  return `<div class="crumb" style="display:flex;gap:6px"><span><a data-act="page.plan">${{arch: 'Architecture', find: 'Findings'}[homePage()] || 'Plan'}</a> › ${esc(sec)} › <span style="color:var(--ink)">${esc(label)}</span></span><span class="spacer"></span><button class="linkb" data-act="page.comment">Comment</button></div>` + body;
 }
 const intentTitle = () => { const s = (intent || '').trim().split('\n')[0], m = /^(.{8,}?[.!?])(\s|$)/.exec(s); const t = m ? m[1] : s; return t.length > 90 ? t.slice(0, 88) + '…' : t; };
 // Threads per plan task (open ones) and the threads that belong to no task.
@@ -3449,7 +3614,7 @@ function planText(P) {
 }
 function toPlan() { if (sel || multi.length || page !== homePage()) { sel = null; multi = []; page = homePage(); if (view === 'seq') renderSeq(); else applySel(); renderSide(); } }
 function gotoSec(id) {
-  if (leftMode === 'arch') { leftMode = 'plan'; localStorage.setItem('archplan.left', 'plan'); }
+  if (leftMode !== 'plan') { leftMode = 'plan'; localStorage.setItem('archplan.left', 'plan'); }
   toPlan();
   const el = $('sec-' + id); if (!el) return;
   const d = el.querySelector('details'); if (d && !d.open) d.open = true;
@@ -3472,7 +3637,7 @@ function renderSide() {
   const keep = [...$('panel').querySelectorAll('textarea[id], input[id]')].map(x => [x.id, x.value, x === document.activeElement, x.selectionStart]);
   const top = $('panel').scrollTop, was = $('panel').dataset.page;
   const cur = multi.length || sel ? 'item:' + (multi.join('|') || anchorOf(sel)) : page;
-  $('panel').innerHTML = multi.length || sel ? itemPage() : page === 'arch' && ARCH ? archPage() : page === 'model' ? modelPage() : page === 'seq' ? seqPage() : page === 'glossary' ? glossPage() : planDoc();
+  $('panel').innerHTML = multi.length || sel ? itemPage() : page === 'arch' && ARCH ? archPage() : page === 'find' && FIND ? findPage() : page === 'model' ? modelPage() : page === 'seq' ? seqPage() : page === 'glossary' ? glossPage() : planDoc();
   $('panel').dataset.page = cur;
   if (cur === was) $('panel').scrollTop = top; else $('panel').scrollTop = 0;
   for (const [id, v, foc, pos] of keep) { const x = $(id); if (!x || (x.value && x.value !== v)) continue; x.value = v; if (foc) { x.focus(); try { x.setSelectionRange(pos, pos); } catch {} } }
@@ -4131,6 +4296,7 @@ function palUpdate() {
   const q = $('palIn').value.trim().toLowerCase(), items = [];
   const it = (k, label, run, r) => items.push({k, label, run, r});
   [['components', 'Components'], ...(ARCH ? [['roles', 'Roles']] : []), ['types', 'Types'], ['seq', 'Sequences'], ['glossary', 'Glossary']].forEach(([v, l]) => it('view', `${l} view`, () => { view = v; sel = null; render(); }));
+  if (FIND) { it('plan', 'Findings', () => setLeft('find')); for (const f of findings()) it('finding', f.title || f.id, () => actions['find.show']({dataset: {id: f.id}}), `${kindLabel(f)}${f.state !== 'new' ? ' · ' + f.state : ''}`); }
   if (ARCH) { it('plan', 'Architecture profile', () => setLeft('arch')); for (const u of archUnits()) it('unit', `${unitName(u)} roles`, () => showUnit(u.id), u.path); }
   [['asis', 'As-is'], ['tobe', 'To-be'], ['diff', 'Diff']].forEach(([m, l]) => it('mode', l, () => { mode = m; render(); }));
   it('view', hideLeaves ? 'Show leaves' : 'Hide leaves', () => setLeaves(!hideLeaves));
@@ -4171,8 +4337,10 @@ function renderHeader() {
   const n = pending().length;
   $('sugPill').hidden = !n;
   $('sendBtn').hidden = !todo().length || !!hoActive();
-  $('leftModes').hidden = $('rolesBtn').hidden = !ARCH;
-  document.querySelectorAll('#leftModes button').forEach(b => b.classList.toggle('on', b.dataset.left === (ARCH ? leftMode : 'plan')));
+  $('rolesBtn').hidden = !ARCH; $('leftModes').hidden = !ARCH && !FIND;
+  const lm = leftMode === 'arch' && ARCH || leftMode === 'find' && FIND ? leftMode : 'plan', nN = FIND ? findNew() : 0;
+  document.querySelectorAll('#leftModes button').forEach(b => { b.classList.toggle('on', b.dataset.left === lm); if (b.dataset.left !== 'plan') b.hidden = !(b.dataset.left === 'arch' ? ARCH : FIND); });
+  $('findN').hidden = !nN; $('findN').textContent = nN;
   $('sugPill').innerHTML = `<span class="dot warn"></span>${plural(n, 'suggestion')} to review`;
   $('suggMode').hidden = !n;
   if (mode === 'sugg' && !n) mode = 'diff';
@@ -4254,8 +4422,8 @@ window.addEventListener('load', () => requestAnimationFrame(async () => {
     $('proj').textContent = collab.name;
     known.modelEtag = collab.model_etag;
     const d = await api('GET', '/api/threads?since=-1'); threadsVer = d.version; threads = d.threads; pollKey = d.key;
-    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag; known.hoVer = d.handover_version; known.archVer = d.architecture_version ?? d.architecture_etag;
-    loadActivity(); loadSuggestions(); loadHotspots(); loadHandover(); loadArch();
+    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag; known.hoVer = d.handover_version; known.archVer = d.architecture_version ?? d.architecture_etag; known.findVer = d.findings_version ?? d.findings_etag;
+    loadActivity(); loadSuggestions(); loadHotspots(); loadHandover(); loadArch(); loadFindings();
     $('hint').style.display = 'none';
   } else { $('proj').textContent = qs.has('sample') ? 'sample' : 'local file'; loadHotspots(); }
   const url = qs.has('sample') ? null : qs.get('model') || collab?.model;

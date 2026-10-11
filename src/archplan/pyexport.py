@@ -2,7 +2,8 @@
 
 Components are packages (directories with __init__.py) and top-level modules.
 Dependencies are imports between them. Types are top-level classes, with
-annotated fields, public methods and base classes. Forbidden contracts from
+annotated fields (and ORM fields such as Django's models.CharField), public
+methods and base classes. Forbidden contracts from
 import-linter become deny rules. The files section lists, per module file, the
 project files it imports. Tests and Django migrations are left out.
 """
@@ -22,6 +23,17 @@ MANY = {"list", "List", "Sequence", "MutableSequence", "Iterable", "Iterator", "
         "FrozenSet", "tuple", "Tuple", "dict", "Dict", "Mapping", "MutableMapping", "Collection", "deque"}
 OPTIONAL = {"Optional", "Annotated", "ClassVar", "Final"}
 INTERFACE_BASES = {"Protocol", "ABC", "ABCMeta"}
+RELATIONS = {"ForeignKey", "OneToOneField", "ManyToManyField"}
+
+
+def orm_field(x: ast.stmt) -> bool:
+    """A class-level `name = models.CharField(...)` style field (Django and
+    similar ORMs): a call to something named *Field, or a relation."""
+    if not (isinstance(x, ast.Assign) and len(x.targets) == 1 and isinstance(x.targets[0], ast.Name)
+            and isinstance(x.value, ast.Call)):
+        return False
+    head = ast.unparse(x.value.func).split(".")[-1]
+    return head.endswith("Field") or head in RELATIONS or head == "GenericForeignKey"
 ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
 RECORD_BASES = {"NamedTuple", "TypedDict", "BaseModel"}
 
@@ -246,6 +258,18 @@ def export(root: Path, packages: list[str] | None = None, granularity: str = "au
             for x in node.body:
                 if isinstance(x, ast.AnnAssign) and isinstance(x.target, ast.Name):
                     field(x.target.id, x.annotation)
+                elif orm_field(x):
+                    name, call = x.targets[0].id, x.value
+                    if name not in seen:
+                        seen.add(name)
+                        kind_ = ast.unparse(call.func).split(".")[-1]
+                        target = call.args[0] if call.args and kind_ in RELATIONS else None
+                        q = qualify(m, ast.unparse(target)) if isinstance(target, (ast.Name, ast.Attribute)) else None
+                        if q:
+                            fields.append({"name": name, "ref": q, **({"many": True} if kind_ == "ManyToManyField" else {})})
+                        else:
+                            arg = f"({target.value})" if isinstance(target, ast.Constant) and isinstance(target.value, str) else ""
+                            fields.append({"name": name, "type": kind_ + arg})
                 elif isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     if x.name == "__init__":
                         for y in ast.walk(x):

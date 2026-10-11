@@ -760,5 +760,163 @@ class ArchitectureApiTest(TempProject):
         self.assertEqual([r["to"] for r in m["files"]["shop/orders/model.py"]["refs"]], ["shop/billing/invoice.py"])
 
 
+def findings_model(ab=5):
+    """Four components with a 2-cycle (A, D) and a 3-cycle (A, B, C), a type
+    with groups of related fields and two types that share their fields."""
+    comps = {c: {"name": c, "path": f"lib/{c.lower()}", "match": [f"lib/{c.lower()}/**"]} for c in "ABCD"}
+    deps = [("A", "B", ab), ("B", "C", 1), ("C", "A", 3), ("A", "D", 2), ("D", "A", 4)]
+    fld = lambda *names: [{"name": n, "type": "string"} for n in names]
+    types = {
+        "A.User": {"name": "User", "component": "A", "kind": "struct", "file": "lib/a/user.ex", "line": 3,
+                   "fields": fld("id", "payout_iban", "payout_name", "payout_status", "verified_email", "verified_phone",
+                                 "verified_at", "notify_mail", "notify_sms", "notify_push", "name")},
+        "B.Member": {"name": "Member", "component": "B", "kind": "struct", "file": "lib/b/member.ex",
+                     "fields": fld("id", "user_id", "public_id", "status", "role", "joined_at", "inserted_at")},
+        "C.Participant": {"name": "Participant", "component": "C", "kind": "struct", "file": "lib/c/participant.ex",
+                          "fields": fld("id", "user_id", "public_id", "status", "role", "joined_at", "updated_at")},
+    }
+    return {"format": "archmodel/1", "components": comps, "types": types,
+            "dependencies": [{"from": a, "to": b, "weight": w, "evidence": [f"lib/{a.lower()}/x.ex:{w}"]}
+                             for a, b, w in deps]}
+
+
+class FindingsTest(TempProject):
+    def setUp(self):
+        super().setUp()
+        self.p = project.init(self.root)
+        self.p.model_path.write_text(json.dumps(findings_model()))
+
+    def test_cycles_cheapest_cut(self):
+        from archplan.findings import cycle_findings, sccs
+        m = findings_model()
+        self.assertEqual(sorted(sccs("ABCDE", {("A", "B"), ("B", "A"), ("C", "D")})), [["A", "B"], ["C"], ["D"], ["E"]])
+        cyc = {tuple(f["evidence"]["cycle"]): f for f in cycle_findings(m)}
+        self.assertEqual(set(cyc), {("A", "D"), ("A", "B", "C")})
+        self.assertEqual(cyc[("A", "D")]["evidence"]["cut"]["from"], "A")
+        abc = cyc[("A", "B", "C")]
+        self.assertEqual((abc["evidence"]["cut"]["from"], abc["evidence"]["cut"]["to"], abc["evidence"]["cut"]["weight"]),
+                         ("B", "C", 1))
+        self.assertEqual(abc["title"], "A → B → C → A form a dependency cycle.")
+        self.assertEqual(abc["files"], ["lib/b/x.ex"])
+
+    def test_fingerprints_stable(self):
+        from archplan.findings import analyse
+        ids = lambda m: {f["id"]: f["kind"] for f in analyse(self.p)[0]}
+        before = ids(None)
+        self.assertEqual(sorted(set(before.values())), ["structure.cycle", "types.fields", "types.synonyms"])
+        self.p.model_path.write_text(json.dumps(findings_model(ab=50)))  # counts change, the findings do not
+        os.utime(self.p.model_path, (1, 1))
+        self.assertEqual(ids(None), before)
+
+    def test_types(self):
+        from archplan.findings import field_findings, synonym_findings
+        m = findings_model()
+        (f,) = field_findings(m)
+        self.assertEqual(f["title"], "A.User has 3 groups of related fields.")
+        self.assertEqual(sorted(f["evidence"]["groups"]), ["notify", "payout", "verified"])
+        (s,) = synonym_findings(m)
+        self.assertEqual(s["evidence"]["types"], ["B.Member", "C.Participant"])
+        self.assertEqual(s["strength"], "strong")  # id and timestamps do not count
+
+    def test_baseline_round_trip(self):
+        from archplan.findings import Findings
+        F = Findings(self.p)
+        fs = F.listing()["findings"]
+        a, b = fs[0]["id"], fs[1]["id"]
+        with self.assertRaises(ValueError):
+            F.decide(a, "dismissed", " ")  # a reason is required
+        F.decide(a, "dismissed", "known, fixed next quarter")
+        F.decide(b, "accepted")
+        st = {f["id"]: (f["state"], f["reason"]) for f in Findings(self.p).listing()["findings"]}
+        self.assertEqual(st[a], ("dismissed", "known, fixed next quarter"))
+        self.assertEqual(st[b], ("accepted", None))
+        saved = json.loads(self.p.path("baseline.json").read_text())
+        self.assertEqual((saved["version"], saved["findings"][a]["title"]), (1, fs[0]["title"]))
+        F.decide(a, "new")
+        self.assertEqual(Findings(self.p).get(a)["state"], "new")
+        F.label(b, "likely the same", "both hold a user's membership")
+        self.assertEqual(Findings(self.p).get(b)["label"], "likely the same")
+        # a baselined finding that leaves the code counts as fixed
+        m = findings_model()
+        m["dependencies"] = [d for d in m["dependencies"] if (d["from"], d["to"]) != ("D", "A")]
+        self.p.model_path.write_text(json.dumps(m))
+        cyc = next(f for f in fs if f["kind"] == "structure.cycle" and f["evidence"]["cycle"] == ["A", "D"])
+        F.decide(cyc["id"], "accepted", "") if cyc["id"] != b else None
+        os.utime(self.p.model_path, (2, 2))
+        self.assertEqual(Findings(self.p).listing()["counts"]["fixed"], 1)
+        r = Findings(self.p).update_baseline()
+        self.assertEqual(r["removed"], 1)
+        self.assertEqual(Findings(self.p).listing()["counts"]["new"], 0)
+
+    def test_untrusted_baseline(self):
+        from archplan.findings import Findings
+        fid = Findings(self.p).listing()["findings"][0]["id"]
+        self.p.path("baseline.json").write_text(json.dumps({"version": 9, "findings": {
+            fid: {"state": "<script>", "reason": "x"}, "other": {"state": "dismissed", "reason": ["r" * 900], "at": 5},
+            "bad": "nope"}, "labels": {fid: {"label": 7, "note": {"a": 1}}}}))
+        lst = Findings(self.p).listing()
+        f = next(x for x in lst["findings"] if x["id"] == fid)
+        self.assertEqual((f["state"], f["label"], f["label_note"]), ("new", "7", "{'a': 1}"))
+        e = Findings(self.p).baseline.read()["findings"]["other"]
+        self.assertEqual((len(e["reason"]), e["at"], e["title"]), (500, "5", None))
+        self.p.path("baseline.json").write_text("not json")
+        self.assertEqual(Findings(self.p).listing()["counts"]["accepted"], 0)
+
+    def test_check_exit_codes(self):
+        def run(*args):
+            buf = io.StringIO()
+            with redirect_stdout(buf), self.assertRaises(SystemExit) as e, \
+                    unittest.mock.patch("sys.stderr", io.StringIO()):
+                cli.main(["check", "--dir", str(self.root), *args])
+            return e.exception.code, buf.getvalue()
+        code, out = run()
+        self.assertEqual(code, 1)
+        self.assertIn("form a dependency cycle", out)
+        code, out = run("--format", "github")
+        self.assertIn("::warning file=lib/b/x.ex,line=1,title=archplan structure.cycle::", out)
+        code, out = run("--json")
+        self.assertEqual(json.loads(out)["counts"]["new"], len(json.loads(out)["findings"]))
+        self.assertEqual(run("--update-baseline")[0], 0)
+        self.assertEqual(run()[0], 0)
+        self.assertIn("[accepted: baseline]", run("--all")[1])
+        self.p.model_path.unlink()
+        self.assertEqual(run()[0], 2)
+
+    def test_api_discuss(self):
+        srv, url = serve_in_thread(self.p)
+        try:
+            st, d = call(url, "/api/findings")
+            self.assertEqual(st, 200)
+            self.assertEqual(d["counts"]["by_group"]["structure"], 2)
+            self.assertIn("findings_etag", d)
+            key = d["key"]
+            f = next(x for x in d["findings"] if x["kind"] == "types.fields")
+            fid = f["id"]
+            st, r = call(url, f"/api/findings/{fid}/discuss", "POST", {})
+            self.assertTrue(r["created"])
+            th = r["thread"]
+            self.assertEqual(th["anchor"], f"finding:{fid}")
+            self.assertEqual(th["snapshot"]["evidence"]["groups"]["payout"][0], "payout_iban")
+            st, r2 = call(url, f"/api/findings/{fid}/discuss", "POST", {"text": "again"})
+            self.assertEqual((r2["created"], r2["thread"]["id"]), (False, th["id"]))
+            self.assertEqual(r2["finding"]["thread"], th["id"])
+            self.assertEqual(len(Store(self.p.dir).read()["threads"]), 1)
+            self.assertEqual(call(url, f"/api/findings/{fid}/dismiss", "POST", {})[0], 400)
+            st, r = call(url, f"/api/findings/{fid}/dismiss", "POST", {"reason": "legacy"})
+            self.assertEqual((st, r["finding"]["state"]), (200, "dismissed"))
+            self.assertNotEqual(r["key"], key)
+            self.assertEqual(call(url, f"/api/findings/{fid}/reopen", "POST", {})[1]["finding"]["state"], "new")
+            self.assertEqual(call(url, "/api/findings/nope/accept", "POST", {})[0], 404)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        a = Agent(self.p)
+        item = a.read_thread(th["id"])["item"]
+        self.assertEqual(item["id"], fid)
+        self.assertEqual(a.label_finding(fid, "worth splitting")["label"], "worth splitting")
+        got = a.get_findings(group="types")
+        self.assertEqual({x["kind"] for x in got["findings"]}, {"types.fields", "types.synonyms"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -112,6 +112,25 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "breaks": {"type": "integer", "default": 5, "maximum": 50, "description": "examples per rule"},
          "full": {"type": "boolean", "default": False, "description": "also return the whole profile, to edit it"}}}},
+    {"name": "get_findings",
+     "description": "Findings: what archplan notices in the code, such as profile rule breaks, dependency cycles "
+                    "(with the cheapest cut), upward layer dependencies, glossary leaks, large types or types with "
+                    "groups of related fields, types that look like synonyms, and hidden coupling from git history. "
+                    "Each has a strength (strong, medium, weak) and a basis. state=new lists those the human has not "
+                    "accepted or dismissed. Give your judgment on one with label_finding; discuss one in a thread "
+                    "on its finding:<id> anchor. get_item(finding:<id>) returns the full evidence.",
+     "inputSchema": {"type": "object", "properties": {
+         "group": {"type": "string", "enum": ["profile", "structure", "layers", "vocabulary", "types", "history"]},
+         "state": {"type": "string", "enum": ["new", "accepted", "dismissed", "all"], "default": "new"},
+         "limit": {"type": "integer", "default": 30, "maximum": 200}}}},
+    {"name": "label_finding",
+     "description": "Put your judgment on a finding that a heuristic cannot settle alone, as a short label the "
+                    "human sees next to it, e.g. \"likely the same\", \"intended\", \"easy fix\". It is shown as a "
+                    "label, never as a verdict: the human still accepts, dismisses or discusses it. An empty label "
+                    "removes yours.",
+     "inputSchema": {"type": "object", "properties": {
+         "id": {"type": "string"}, "label": {"type": "string", "description": "a few words"},
+         "note": {"type": "string", "description": "one or two sentences: why"}}, "required": ["id", "label"]}},
     {"name": "update_profile",
      "description": "Replace the proposed architecture profile (the whole object, as get_architecture's profile "
                     "has it; use full=true there to get it). Only while the profile is proposed: once the human "
@@ -272,6 +291,17 @@ class Agent:
         return {"saved": True, "status": prof["status"],
                 "summary": architecture.summary(a.state(), 3)}
 
+    def get_findings(self, group=None, state="new", limit=30):
+        from .findings import Findings, compact
+        lst = Findings(self.p).listing(self.store)
+        fs = [f for f in lst["findings"] if (state == "all" or f["state"] == state) and (not group or f["group"] == group)]
+        return {"counts": lst["counts"], "missing": lst["missing"], "shown": min(len(fs), int(limit)), "of": len(fs),
+                "findings": [compact(f) for f in fs[:min(int(limit), 200)]]}
+
+    def label_finding(self, id, label, note=""):
+        from .findings import Findings, compact
+        return compact(Findings(self.p).label(id, label, note))
+
     def get_handover(self):
         h = self.handovers.current()
         if not h:
@@ -380,11 +410,14 @@ ACTIVITY = {
     "get_handover": "Reading the planned refactors",
     "get_architecture": "Reading the architecture profile",
     "update_profile": "Updated the architecture profile",
+    "get_findings": "Reading the findings",
+    "label_finding": "Labelled finding {id}: {label}",
     "propose_batches": "Proposed how to split the refactors into batches",
     "set_refactor_state": "{progress}",
 }
 DONE = {"refresh_model": "Re-exported the model"}  # long calls: a second entry when they finish
-AFTER = ("reply", "open_thread", "edit_target", "propose_batches", "set_refactor_state", "update_profile")  # recorded only when they succeed
+AFTER = ("reply", "open_thread", "edit_target", "propose_batches", "set_refactor_state", "update_profile",
+         "label_finding")  # recorded only when they succeed
 
 
 def record(p: Project, store: Store, tool: str, args: dict, done: bool = False) -> None:

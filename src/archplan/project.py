@@ -15,6 +15,7 @@ editor) and an agent (over MCP):
   activity.json          the agent's latest MCP call, for the editor; not committed
   hotspots.json          cached analysis of the git history; not committed
   architecture.json      the architecture profile: units, roles, rules, layers
+  baseline.json          findings the human accepted or dismissed, and Claude's labels on findings
   server.json            the running editor server (url, pid); not committed
 """
 

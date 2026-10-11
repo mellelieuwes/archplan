@@ -5,13 +5,13 @@ from __future__ import annotations
 import copy
 import json
 
-from .project import Project, etag, read_json
+from .project import Project, ProjectError, etag, read_json
 
 ANCHORS = ("Anchors name what a thread is about: type:<type id>, comp:<component id>, "
            "cedge:<from>-><to> (a component dependency), msg:<sequence id>:<message id>, "
            "concept:<concept id> (a glossary concept), leak:<component id>:<concept id> (a component using "
            "terms of a concept it should not), tedge:<kind>:<from type>-><to type> (a type relation), "
-           "task:<plan task key>, step:<plan task key>#<step index>, and group:<anchor>|<anchor>|... "
+           "task:<plan task key>, step:<plan task key>#<step index>, finding:<finding id>, and group:<anchor>|<anchor>|... "
            "for one comment on several items, such as an import cycle.")
 
 
@@ -59,6 +59,12 @@ def get_item(p: Project, anchor: str):
         src, _, dst = pair.partition("->")
         return {"relation": rel, "from": {"anchor": "type:" + src, "item": get_item(p, "type:" + src)},
                 "to": {"anchor": "type:" + dst, "item": get_item(p, "type:" + dst)}}
+    if kind == "finding":
+        from .findings import Findings
+        try:
+            return Findings(p).get(rest)
+        except (KeyError, ProjectError):
+            return {"note": f"No finding {rest} in the current code; it may be fixed."}
     if kind in ("task", "step"):
         key = rest.split("#")[0]
         plan = read_json(p.path("plan.json"))

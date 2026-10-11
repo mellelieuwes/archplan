@@ -15,26 +15,31 @@ from urllib.parse import unquote
 
 from . import handover, hotspots
 from .architecture import Architecture, ArchitectureError
+from .findings import Findings
 from .project import Project, ProjectError, UntrustedExport, etag, read_json, write_atomic, write_json
 from .handover import Handovers
 from .store import Conflict, NotFound, Store, wait
 from .suggestions import Suggestions, pick, preview
 
+FINDING_ACTIONS = {"dismiss": "dismissed", "accept": "accepted", "reopen": "new", "discuss": None}
 LONG_POLL = 25.0  # seconds the editor's request for changes may wait
 STATIC = Path(str(resources.files("archplan") / "static"))
 
 
 def changes(p: Project, store: Store) -> dict:
     """What the editor polls for: threads, the as-is model, the target revision,
-    the agent's suggestions, the handover and the agent's last activity. key
+    the agent's suggestions, the handover, the architecture profile, the
+    findings baseline and the agent's last activity. key
     changes when any does."""
     st = p.state()
     c = {"version": store.version(), "model_etag": etag(p.model_path),
          "target_rev": st.get("target_rev", 0), "target_by": st.get("target_by"),
          "suggestions_version": Suggestions(p.dir).version(), "handover_version": Handovers(p.dir).version(),
-         "architecture_etag": etag(p.path("architecture.json")), "activity_etag": etag(p.path("activity.json"))}
+         "architecture_etag": etag(p.path("architecture.json")), "findings_etag": etag(p.path("baseline.json")),
+         "activity_etag": etag(p.path("activity.json"))}
     c["key"] = ".".join(str(c[k]) for k in ("version", "model_etag", "target_rev", "suggestions_version",
-                                            "handover_version", "architecture_etag", "activity_etag"))
+                                            "handover_version", "architecture_etag", "findings_etag",
+                                            "activity_etag"))
     return c
 
 
@@ -45,6 +50,8 @@ def make_handler(p: Project, store: Store):
     handovers = Handovers(p.dir)
     arch = Architecture(p)
     arch_lock = threading.Lock()
+    findings = Findings(p)
+    findings.arch = arch  # share the profile analysis cache
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
@@ -141,6 +148,12 @@ def make_handler(p: Project, store: Store):
                         return self.send_json({**arch.state(), **changes(p, store)})
                 except ArchitectureError as e:
                     return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
+            if path == "/api/findings":
+                try:
+                    with arch_lock:
+                        return self.send_json({**findings.listing(store), **changes(p, store)})
+                except ArchitectureError as e:
+                    return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
             if path == "/api/suggestions":
                 return self.send_json({"suggestions": suggestions.newest(), **changes(p, store)})
             parts = path.strip("/").split("/")
@@ -203,6 +216,14 @@ def make_handler(p: Project, store: Store):
                     with arch_lock:
                         proposal, saved = arch.infer()
                     return self.send_json({"proposal": proposal, "saved": saved, **changes(p, store)})
+                if len(parts) == 4 and parts[:2] == ["api", "findings"] and parts[3] in FINDING_ACTIONS:
+                    with arch_lock:
+                        if parts[3] == "discuss":
+                            th, created = findings.discuss(store, parts[2], b.get("text"))
+                            return self.send_json({"thread": th, "created": created,
+                                                   "finding": findings.get(parts[2], store), **changes(p, store)})
+                        f = findings.decide(parts[2], FINDING_ACTIONS[parts[3]], b.get("reason"))
+                    return self.send_json({"finding": f, **changes(p, store)})
                 if parts == ["api", "handover"]:
                     return self.send_json(handovers.create(store, b.get("mode", "all"), b.get("note", "")))
                 if len(parts) == 4 and parts[:2] == ["api", "handover"] and parts[3] == "approve":

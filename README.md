@@ -61,6 +61,7 @@ archplan up        # starts the editor in the background and prints its URL
 | Read replies: orange **decision** threads need your choice (click an option); **feedback** threads only need reading | Replies with `reply`, marks a reply as a decision only when it is blocked on you |
 | Preview a suggestion and accept all, some or none of its changes | Proposes a refactor of the target with `edit_target`; learns the outcome from the monitor |
 | Review the architecture profile: units, file roles and the rules between them | Proposes a profile with `update_profile`; checks code against it with `get_architecture` |
+| Work through the findings: discuss one, dismiss it with a reason, or accept it as is | Lists them with `get_findings`; labels the ones a heuristic cannot settle with `label_finding` |
 | Look at hotspots and components that change together | Finds hidden coupling in the git history with `get_hotspots` and opens a thread on it |
 | Lock in a settled thread as a planned refactor, then go on with the open discussions | Leaves planned refactors alone; they do not wait on it |
 | Order the planned refactors and send them all as one handover: all in one go, or ask for a split first | Reads them with `get_handover`; for a split, proposes batches with `propose_batches` |
@@ -81,6 +82,7 @@ Everything is stored in `.archplan/` in the repository:
 | `suggestions.json` | target changes the agent proposed, and what you decided |
 | `handovers.json` | planned refactors you sent to the agent, its batches and progress |
 | `architecture.json` | the architecture profile: units, roles, rules and layers |
+| `baseline.json` | findings you accepted or dismissed, and Claude's labels on findings |
 | `activity.json` | what the agent did last, shown in the editor |
 | `hotspots.json` | the cached git history analysis |
 
@@ -105,6 +107,7 @@ In a message, `@[Label](anchor)` mentions a model item, for example
 | `archplan watch` | one line per human comment, plan change or decided suggestion |
 | `archplan hotspots [--since DAYS] [--json]` | components that change most, and pairs that change together without a dependency |
 | `archplan profile [infer\|show] [--json]` | propose an architecture profile, or show how the code conforms to it |
+| `archplan check [--format github] [--all] [--update-baseline] [--export] [--json]` | new findings; exit 1 when there are any, 2 on errors |
 | `archplan hook` | Claude Code hook: report threads that wait on the agent |
 | `archplan export-python` | the built-in Python exporter |
 | `archplan export-elixir`, `archplan trace-elixir` | the Elixir exporter and test tracer |
@@ -143,6 +146,43 @@ profile. `archplan profile` shows the role coverage and the rule breaks.
 Rules need the file references in the model's `files` section. The Python
 and Elixir exporters write it.
 
+## Findings and `archplan check`
+
+A finding is something archplan notices in the model. Each one has a
+strength (strong, medium or weak) and a basis, such as "19 of 20 units
+follow it".
+
+| Kind | What it reports |
+|---|---|
+| `profile.rule` | a unit breaks a calls rule of the architecture profile |
+| `profile.pair` | a unit has files without their partner, such as a view without a view builder |
+| `structure.cycle` | components that depend on each other in a cycle, with the cheapest cut: the dependency with the fewest references |
+| `layers.upward` | a component depends on a higher layer of the profile |
+| `layers.policy` | a dependency the target's policy forbids |
+| `vocabulary.leak` | a component uses a term of a concept it should not (needs glossaries) |
+| `types.fields` | a type with 25 or more fields, 3 or more groups of related fields, or 6 or more boolean flags |
+| `types.synonyms` | types in different components that share 70% or more of their field names |
+| `history.coupling` | components that change together without a dependency (from the cached `archplan hotspots`) |
+
+In the editor you discuss a finding, dismiss it with a reason, or accept it
+as is. Accepted and dismissed findings go into `.archplan/baseline.json`.
+Commit that file. From then on only new findings show.
+
+`archplan check` lists the new findings. It exits with 1 when there are any,
+0 when there are none, and 2 on errors. `--update-baseline` accepts all
+current findings, for a first run on an existing codebase. A GitHub Actions
+step for a Python project:
+
+```yaml
+- run: pip install git+https://github.com/vloothuis/archplan
+- run: archplan export-python -o .archplan/model.archmodel.json
+- run: archplan check --format github
+```
+
+`--export` runs the configured export command first. It runs only once a
+person approved that command with `archplan trust`, so in CI run the
+exporter yourself, as above.
+
 ## Exporters
 
 An exporter writes an [archmodel/1](src/archplan/format/archmodel.md) file.
@@ -152,7 +192,8 @@ An exporter writes an [archmodel/1](src/archplan/format/archmodel.md) file.
   `go run github.com/vloothuis/archplan/exporters/archplan-go@latest`. It reads
   `.go-arch-lint.yml` when present, and seqtrace call traces with `-steps`.
 - **Python** (`pyproject.toml`, `setup.py`): `archplan export-python`, built in.
-  It reads import-linter `forbidden` contracts as rules.
+  It reads import-linter `forbidden` contracts as rules, and Django model
+  fields as type fields.
 - **Elixir** (`mix.exs`, in the root or a subdirectory):
   `archplan export-elixir`, which needs `mix`. `archplan trace-elixir` runs
   tests and records call sequences. See [`exporters/elixir`](exporters/elixir).

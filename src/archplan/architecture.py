@@ -170,7 +170,8 @@ def role_of(rel: str, roles: list) -> str | None:
 
 # ---------- analysis ----------
 
-def analyse(profile: dict, model: dict, root: Path | None = None) -> dict:
+def analyse(profile: dict, model: dict, root: Path | None = None, cap: int = MAX_BREAKS) -> dict:
+    """Units, role coverage and rule breaks. cap limits the breaks listed per rule."""
     files = source_files(model, root)
     us = units(profile, files)
     roles = profile.get("roles") or []
@@ -194,12 +195,16 @@ def analyse(profile: dict, model: dict, root: Path | None = None) -> dict:
     checks, broken = Counter(), Counter()
     rule_out = []
     for rule in profile.get("rules") or []:
+        rc, rb = Counter(), Counter()
         if rule.get("type") == "pair":
-            n, breaks = pair_breaks(rule, out_units, names_in, checks, broken)
+            n, breaks = pair_breaks(rule, out_units, names_in, rc, rb, cap)
         else:
-            n, breaks = call_breaks(rule, edges, unit_of, role_of_file, checks, broken)
+            n, breaks = call_breaks(rule, edges, unit_of, role_of_file, rc, rb, cap)
+        checks.update(rc)
+        broken.update(rb)
         rule_out.append({"id": rule.get("id"), "text": rule.get("text") or rule_text(rule, roles),
-                         "type": rule.get("type", "calls"), "count": n, "breaks": breaks[:MAX_BREAKS]})
+                         "type": rule.get("type", "calls"), "count": n, "breaks": breaks[:cap],
+                         "units_checked": len(rc), "units_broken": len(rb)})
     for u in out_units:
         u["conformance"] = round(1 - broken[u["id"]] / checks[u["id"]], 3) if checks[u["id"]] else 1.0
     n = len(out_units)
@@ -223,7 +228,7 @@ def as_list(x) -> list:
     return x if isinstance(x, list) else [x] if x else []
 
 
-def call_breaks(rule, edges, unit_of, role_of_file, checks, broken) -> tuple:
+def call_breaks(rule, edges, unit_of, role_of_file, checks, broken, cap: int = MAX_BREAKS) -> tuple:
     """Edges into unit files that break a calls rule. allow=true: matching
     edges may only reach the `to` roles. allow=false: they must not."""
     frm, to = as_list(rule.get("from") or "any"), set(as_list(rule.get("to")))
@@ -248,7 +253,7 @@ def call_breaks(rule, edges, unit_of, role_of_file, checks, broken) -> tuple:
             if (dr not in to) if allow else (dr in to):
                 n += 1
                 broken[owner] += 1
-                if len(out) < MAX_BREAKS:
+                if len(out) < cap:
                     out.append({"unit": owner, "from": src, "to": dst,
                                 "detail": f"{role_label(role_of_file.get(src), su)} -> {dr or 'no role'}"
                                           + (f" (line {line})" if line else "")})
@@ -272,7 +277,7 @@ def pair_specs(rule) -> list:
     return out
 
 
-def pair_breaks(rule, out_units, names_in, checks, broken) -> tuple:
+def pair_breaks(rule, out_units, names_in, checks, broken, cap: int = MAX_BREAKS) -> tuple:
     specs = pair_specs(rule)
     n, out = 0, []
     for u in out_units:
@@ -294,7 +299,7 @@ def pair_breaks(rule, out_units, names_in, checks, broken) -> tuple:
             if not ok:
                 n += 1
                 broken[u["id"]] += 1
-                if len(out) < MAX_BREAKS:
+                if len(out) < cap:
                     out.append({"unit": u["id"], "from": f["path"],
                                 "to": (u["path"] + "/" + want) if want else None,
                                 "detail": f"no {want or rule.get('needs')}"})

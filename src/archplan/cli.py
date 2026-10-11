@@ -11,6 +11,7 @@
   archplan watch                 one line per human comment, plan change or decided suggestion
   archplan hotspots [--since N]  components that change often, and ones that change together
   archplan profile [infer|show]  the architecture profile: roles, rules and where the code breaks them
+  archplan check [--format github]  new findings (cycles, rule breaks, ...); exit 1 when there are any
   archplan hook                  Claude Code hook: tell the agent about new comments
   archplan export-python         built-in exporter for Python projects
   archplan export-elixir         exporter for Elixir/Mix projects (needs mix)
@@ -322,6 +323,47 @@ def cmd_profile(a):
     print(architecture.text(st))
 
 
+def cmd_check(a):
+    """Exit 1 when there are new findings, 0 when there are none, 2 on errors."""
+    from . import findings
+    try:
+        p = Project.find(dir=a.dir)
+    except ProjectError as e:
+        die(str(e), 2)
+    if a.export:
+        if not p.trusted():
+            if not (sys.stdin.isatty() and sys.stderr.isatty()):
+                die("the export command is not approved on this machine; run `archplan trust` in a terminal, "
+                    "or run the exporter yourself before `archplan check`", 2)
+            confirm_trust(p)
+        print(f"running: {shown(p.export_command() or '')}", file=sys.stderr)
+        try:
+            p.export()
+        except ProjectError as e:
+            die(str(e), 2)
+    try:
+        f = findings.Findings(p)
+        if a.update_baseline:
+            r = f.update_baseline()
+            print(f"baseline: {r['added']} accepted, {r['removed']} removed, {r['total']} in "
+                  f"{f.baseline.path.relative_to(p.root)}", file=sys.stderr)
+        lst = f.listing()
+    except ProjectError as e:
+        die(str(e), 2)
+    new = lst["counts"]["new"]
+    if a.json:
+        out = {**lst, "findings": [x for x in lst["findings"] if a.all or x["state"] == "new"]}
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+    elif a.format == "github":
+        text = findings.github(lst, a.all)
+        if text:
+            print(text)
+        print(f"archplan: {new} new findings", file=sys.stderr)
+    else:
+        print(findings.text(lst, a.all))
+    sys.exit(1 if new else 0)
+
+
 def cmd_export_python(a):
     from .pyexport import export
     root = Path(a.root or ".").resolve()
@@ -350,6 +392,7 @@ Start, in the repository root:
 Then, to see where the code changes most:
   archplan hotspots  hotspots and hidden coupling from the git history
   archplan profile   the conventions inside units (roles, rules) and where code breaks them
+  archplan check     findings: cycles, rule breaks, layer and type problems; also for CI
 
 With Claude Code: install the plugin, then type /archplan in the repository.
   claude plugin marketplace add vloothuis/archplan
@@ -415,6 +458,14 @@ def main(argv=None):
     s = add("profile", cmd_profile, "show or infer the architecture profile (roles, rules, breaks)")
     s.add_argument("action", nargs="?", choices=["show", "infer"], default="show")
     s.add_argument("--json", action="store_true", help="the profile and the full analysis as JSON")
+    s = add("check", cmd_check, "list new findings (exit 1 when there are any), for CI")
+    s.add_argument("--json", action="store_true", help="findings, counts and missing kinds as JSON")
+    s.add_argument("--format", choices=["text", "github"], default="text",
+                   help="github: ::warning annotations for GitHub Actions")
+    s.add_argument("--all", action="store_true", help="also list accepted and dismissed findings")
+    s.add_argument("--update-baseline", action="store_true",
+                   help="accept every current finding into .archplan/baseline.json (reason: baseline)")
+    s.add_argument("--export", action="store_true", help="run the export command first")
     s = add("hotspots", cmd_hotspots, "components that change often, and pairs that change together (from git)")
     s.add_argument("--since", type=int, default=365, metavar="DAYS", help="days of history (default: 365)")
     s.add_argument("--json", action="store_true", help="the full analysis as JSON")

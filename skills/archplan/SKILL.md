@@ -94,6 +94,25 @@ To change a proposed profile, send the whole profile with
 in the editor; a locked profile is refused. `archplan profile` prints the
 same in a terminal.
 
+### Findings
+
+`get_findings` lists what archplan notices: profile rule breaks, dependency
+cycles with the cheapest cut, upward layer dependencies, glossary leaks,
+large types, types that look like synonyms, and hidden coupling. By default
+it lists the new ones, those the human has not accepted or dismissed.
+`get_item("finding:<id>")` gives the full evidence.
+
+- When a heuristic cannot settle a finding alone, check the code and give
+  your judgment with `label_finding(id, label, note)`, for example "likely
+  the same" or "intended". The human sees it as a label, not a verdict.
+- When the human discusses a finding, its thread has the anchor
+  `finding:<id>` and the evidence as a snapshot. Answer it like any thread;
+  propose a fix with `edit_target`.
+- Never accept or dismiss findings yourself. That is the human's call.
+
+`archplan check` prints the new findings in a terminal and exits with 1 when
+there are any. In CI, use `archplan check --format github`.
+
 ## 6. Model before you build
 
 When the human asks you to model a change, use `edit_target` (add or move
@@ -159,3 +178,4 @@ progress.
 | `archplan threads --waiting agent` | threads that wait on you, as text |
 | `archplan hotspots` | hotspots and hidden coupling from the git history |
 | `archplan profile` | the architecture profile and its rule breaks |
+| `archplan check` | new findings; exit 1 when there are any |
