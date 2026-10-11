@@ -1,0 +1,259 @@
+{
+  "name": "spring",
+  "title": "Spring Boot layers",
+  "language": "java",
+  "description": "Spring (Java and Kotlin): one unit per source root (src/main/java or src/main/kotlin). Roles come from class-name suffixes and package names; controllers call services, services call repositories.",
+  "detect": {
+    "priority": 40,
+    "deps": [
+      "spring-boot",
+      "org.springframework.boot",
+      "spring-context",
+      "spring-webmvc"
+    ],
+    "files": [
+      "**/src/main/**"
+    ]
+  },
+  "units": [
+    {
+      "kind": "Module",
+      "glob": "**/src/main/java"
+    },
+    {
+      "kind": "Module",
+      "glob": "**/src/main/kotlin"
+    }
+  ],
+  "roles": [
+    {
+      "id": "controller",
+      "patterns": [
+        "*Controller.java",
+        "*RestController.java",
+        "*Resource.java",
+        "*Endpoint.java",
+        "*API.java",
+        "*Api.java",
+        "*Controller.kt",
+        "*RestController.kt",
+        "*Resource.kt",
+        "*Endpoint.kt",
+        "*API.kt",
+        "*Api.kt",
+        "**/controller/**",
+        "**/controllers/**"
+      ],
+      "name": "Controllers"
+    },
+    {
+      "id": "service",
+      "patterns": [
+        "*Service.java",
+        "*ServiceImpl.java",
+        "*UseCase.java",
+        "*Service.kt",
+        "*ServiceImpl.kt",
+        "*UseCase.kt",
+        "**/service/**",
+        "**/application/**"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "repository",
+      "patterns": [
+        "*Repository.java",
+        "*Repo.java",
+        "*Dao.java",
+        "*Mapper.java",
+        "*Repository.kt",
+        "*Repo.kt",
+        "*Dao.kt",
+        "*Mapper.kt",
+        "**/repository/**",
+        "**/persistence/**"
+      ],
+      "name": "Repositories"
+    },
+    {
+      "id": "entity",
+      "patterns": [
+        "*Entity.java",
+        "*Entity.kt",
+        "**/entity/**",
+        "**/entities/**",
+        "**/domain/**",
+        "**/model/**"
+      ],
+      "name": "Entities"
+    },
+    {
+      "id": "dto",
+      "patterns": [
+        "*Dto.java",
+        "*DTO.java",
+        "*Request.java",
+        "*Response.java",
+        "*Dto.kt",
+        "*DTO.kt",
+        "*Request.kt",
+        "*Response.kt",
+        "**/dto/**",
+        "**/pojo/**"
+      ],
+      "name": "DTOs"
+    },
+    {
+      "id": "scheduled",
+      "patterns": [
+        "*Scheduler.java",
+        "*Job.java",
+        "*Listener.java",
+        "*Consumer.java",
+        "*Scheduler.kt",
+        "*Job.kt",
+        "*Listener.kt",
+        "*Consumer.kt",
+        "**/scheduled/**",
+        "**/jobs/**",
+        "**/queue/**",
+        "**/messaging/**"
+      ],
+      "name": "Jobs and listeners"
+    },
+    {
+      "id": "exception",
+      "patterns": [
+        "*Exception.java",
+        "*Exception.kt",
+        "**/exception/**",
+        "**/exceptions/**"
+      ],
+      "name": "Exceptions"
+    },
+    {
+      "id": "util",
+      "patterns": [
+        "*Util.java",
+        "*Utils.java",
+        "*Util.kt",
+        "*Utils.kt",
+        "**/util/**",
+        "**/utils/**",
+        "**/common/**"
+      ],
+      "name": "Utilities"
+    },
+    {
+      "id": "config",
+      "patterns": [
+        "*Config.java",
+        "*Configuration.java",
+        "*Properties.java",
+        "*Config.kt",
+        "*Configuration.kt",
+        "*Properties.kt",
+        "**/config/**"
+      ],
+      "name": "Configuration"
+    }
+  ],
+  "rules": [
+    {
+      "id": "controllers-not-repositories",
+      "type": "calls",
+      "from": "controller",
+      "to": "repository",
+      "allow": false,
+      "scope": "any",
+      "text": "Controllers call services, not repositories"
+    },
+    {
+      "id": "no-calls-into-controllers",
+      "type": "calls",
+      "from": [
+        "service",
+        "repository",
+        "entity",
+        "dto"
+      ],
+      "to": "controller",
+      "allow": false,
+      "scope": "any",
+      "text": "Nothing below the web layer calls controllers"
+    },
+    {
+      "id": "repositories-stay-low",
+      "type": "calls",
+      "from": "repository",
+      "to": [
+        "service",
+        "controller"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Repositories do not call services or controllers"
+    },
+    {
+      "id": "entities-stay-low",
+      "type": "calls",
+      "from": "entity",
+      "to": [
+        "service",
+        "repository",
+        "controller"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Entities do not call services, repositories or controllers"
+    }
+  ],
+  "layers": [
+    {
+      "name": "Web",
+      "match": [
+        "*.controller",
+        "*.controller.*",
+        "*.web",
+        "*.web.*",
+        "*.api",
+        "*.api.*",
+        "*.rest",
+        "*.rest.*"
+      ]
+    },
+    {
+      "name": "Service",
+      "match": [
+        "*.service",
+        "*.service.*",
+        "*.application",
+        "*.application.*",
+        "*.usecase*"
+      ]
+    },
+    {
+      "name": "Persistence",
+      "match": [
+        "*.repository",
+        "*.repository.*",
+        "*.persistence",
+        "*.persistence.*",
+        "*.dao"
+      ]
+    },
+    {
+      "name": "Domain",
+      "match": [
+        "*.domain",
+        "*.domain.*",
+        "*.model",
+        "*.model.*",
+        "*.entity",
+        "*.entity.*",
+        "*.dto"
+      ]
+    }
+  ]
+}

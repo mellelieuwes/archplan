@@ -301,7 +301,8 @@ class Agent:
         f = self.p.path("plan.json" if format == "json" else "plan.md")
         if not f.exists():
             return "No plan yet: the editor writes one once the target model differs from the code."
-        return f.read_text()
+        from .safeio import read_file
+        return read_file(f, 16 << 20)
 
     def get_item(self, anchor):
         return get_item(self.p, anchor)

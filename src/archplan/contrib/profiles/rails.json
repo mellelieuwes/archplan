@@ -1,0 +1,160 @@
+{
+  "name": "rails",
+  "title": "Rails app",
+  "language": "ruby",
+  "description": "Rails: the app/ folder, with one role per standard subfolder. Models and jobs do not reach up into controllers or helpers.",
+  "detect": {
+    "priority": 50,
+    "any": [
+      {
+        "deps": [
+          "rails",
+          "railties"
+        ],
+        "files": [
+          "**/app/models/**/*.rb"
+        ]
+      },
+      {
+        "files": [
+          "**/config/routes.rb",
+          "**/app/controllers/**/*.rb"
+        ]
+      }
+    ]
+  },
+  "units": [
+    {
+      "kind": "App",
+      "glob": "**/app",
+      "require": [
+        "controllers/",
+        "models/"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "models",
+      "patterns": [
+        "models/**"
+      ],
+      "name": "Models"
+    },
+    {
+      "id": "controllers",
+      "patterns": [
+        "controllers/**"
+      ],
+      "name": "Controllers"
+    },
+    {
+      "id": "helpers",
+      "patterns": [
+        "helpers/**"
+      ],
+      "name": "Helpers"
+    },
+    {
+      "id": "views",
+      "patterns": [
+        "views/**",
+        "components/**"
+      ],
+      "name": "Views"
+    },
+    {
+      "id": "jobs",
+      "patterns": [
+        "jobs/**",
+        "workers/**",
+        "sidekiq/**"
+      ],
+      "name": "Jobs"
+    },
+    {
+      "id": "mailers",
+      "patterns": [
+        "mailers/**"
+      ],
+      "name": "Mailers"
+    },
+    {
+      "id": "channels",
+      "patterns": [
+        "channels/**"
+      ],
+      "name": "Channels"
+    },
+    {
+      "id": "services",
+      "patterns": [
+        "services/**",
+        "interactors/**",
+        "operations/**"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "serializers",
+      "patterns": [
+        "serializers/**",
+        "presenters/**",
+        "decorators/**"
+      ],
+      "name": "Serializers"
+    },
+    {
+      "id": "policies",
+      "patterns": [
+        "policies/**"
+      ],
+      "name": "Policies"
+    }
+  ],
+  "rules": [
+    {
+      "id": "models-stay-low",
+      "type": "calls",
+      "from": "models",
+      "to": [
+        "controllers",
+        "helpers",
+        "views",
+        "serializers"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Models do not reference controllers, helpers, views or serializers"
+    },
+    {
+      "id": "no-calls-into-controllers",
+      "type": "calls",
+      "from": [
+        "models",
+        "jobs",
+        "mailers",
+        "services",
+        "helpers",
+        "serializers",
+        "policies"
+      ],
+      "to": "controllers",
+      "allow": false,
+      "scope": "any",
+      "text": "Only routes call controllers"
+    },
+    {
+      "id": "jobs-not-helpers",
+      "type": "calls",
+      "from": [
+        "jobs",
+        "services"
+      ],
+      "to": "helpers",
+      "allow": false,
+      "scope": "any",
+      "text": "Jobs and services do not use view helpers"
+    }
+  ]
+}

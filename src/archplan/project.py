@@ -28,8 +28,10 @@ import hashlib
 import json
 import os
 import shlex
+import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 DIR = ".archplan"
@@ -66,6 +68,94 @@ def command_hash(root: Path, cmd: str) -> str:
     return hashlib.sha256(f"{root}\0{cmd}".encode()).hexdigest()
 
 
+# A trust record approves a command for a directory, plus the content of the
+# repository files the command names. In trusted.json, "commands" and
+# "detectors" list the approved command hashes and "files" maps a hash to
+# {repository path: sha256}. When one of those files changes (after a git
+# pull, say), the command needs a new approval.
+
+OUTPUT_FLAGS = {"-o", "--output", "--out"}
+
+
+def file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f"{path}: not a regular file")
+        while True:
+            b = os.read(fd, 1 << 20)
+            if not b:
+                break
+            h.update(b)
+    finally:
+        os.close(fd)
+    return h.hexdigest()
+
+
+def arg_files(root: Path, cmd: str) -> dict:
+    """{repository path: sha256} for each argument of cmd that names a regular
+    file inside root, relative to root. An argument such as --script=x.py
+    counts with its value; the output after -o does not count."""
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        return {}
+    base = Path(root).resolve()
+    out = {}
+    for i, t in enumerate(toks):
+        if i and toks[i - 1] in OUTPUT_FLAGS:
+            continue
+        for cand in {t, t.split("=", 1)[1] if "=" in t else ""}:
+            if not cand or len(cand) > 4096:
+                continue
+            try:
+                fp = (base / cand).resolve()
+                rel = fp.relative_to(base).as_posix()
+                if rel == "." or not stat.S_ISREG(os.stat(fp).st_mode):
+                    continue
+                out[rel] = file_sha256(str(fp))
+            except (OSError, ValueError, RuntimeError):
+                continue
+    return out
+
+
+def load_trust() -> dict:
+    try:
+        data = read_json(trust_path(), {}, follow=True) or {}
+    except ValueError:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def trust_state(root: Path, kind: str, key: str, cmd: str) -> tuple:
+    """(approved, changed): whether key is approved under kind ("commands" or
+    "detectors") and the files named in cmd still match; changed lists the
+    repository files that differ from the approval."""
+    data = load_trust()
+    if key not in (data.get(kind) or []):
+        return False, []
+    stored = (data.get("files") or {}).get(key) or {}
+    cur = arg_files(root, cmd)
+    changed = sorted(f for f in set(stored) | set(cur) if stored.get(f) != cur.get(f))
+    return not changed, changed
+
+
+def record_trust(root: Path, kind: str, key: str, cmd: str) -> None:
+    data = load_trust()
+    lst = data.setdefault(kind, [])
+    if key not in lst:
+        lst.append(key)
+    data.setdefault("files", {})[key] = arg_files(root, cmd)
+    tp = trust_path()
+    tp.parent.mkdir(parents=True, exist_ok=True)
+    write_json(tp, data)
+
+
+def changed_note(changed: list) -> str:
+    return ("; changed since it was approved: " + ", ".join(changed[:10])) if changed else ""
+
+
 def find_root(start: Path | None = None) -> Path | None:
     """The nearest directory, from start upwards, that has an .archplan directory."""
     p = (start or Path.cwd()).resolve()
@@ -76,20 +166,51 @@ def find_root(start: Path | None = None) -> Path | None:
 
 
 def write_atomic(p: Path, text: str) -> None:
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, p)
+    """Write p through a new temporary file, so a planted symlink at p or at a
+    fixed temporary name cannot redirect the write outside the repository."""
+    fd, tmp = tempfile.mkstemp(prefix=f".{p.name}.", suffix=".tmp", dir=p.parent)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def write_json(p: Path, obj) -> None:
     write_atomic(p, json.dumps(obj, indent=2, ensure_ascii=False) + "\n")
 
 
-def read_json(p: Path, default=None):
+MAX_JSON = 256 << 20
+
+
+def read_json(p: Path, default=None, follow: bool = False):
+    """The JSON in p, or default when p does not exist. Files in .archplan are
+    repository data: p must be a regular file of at most MAX_JSON bytes, and
+    not a symlink unless follow is set (for files outside the repository)."""
+    from .safeio import read_bytes
     try:
-        return json.loads(p.read_text())
+        target = os.path.realpath(p) if follow else p
+        return json.loads(read_bytes(target, MAX_JSON))
     except FileNotFoundError:
         return default
+
+
+def append_ignore(p: "Project", name: str) -> None:
+    """Add name to .archplan/.gitignore when it is not listed there yet."""
+    from .safeio import read_file
+    gi = p.path(".gitignore")
+    try:
+        text = read_file(gi, 1 << 16)
+    except OSError:
+        return
+    if name not in text.split():
+        write_atomic(gi, text.rstrip("\n") + "\n" + name + "\n")
 
 
 def etag(p: Path) -> str | None:
@@ -171,8 +292,9 @@ class Project:
         rev = int(st.get("target_rev", 0)) + 1
         upd = {"target_rev": rev, "target_by": by}
         cur = etag(self.model_path)
+        from .safeio import read_file
         if base_etag and base_etag == cur and st.get("base_etag") != cur:
-            write_atomic(self.base_path, self.model_path.read_text())
+            write_atomic(self.base_path, read_file(self.model_path, MAX_JSON))
             upd["base_etag"] = cur
         self.set_state(**upd)
         return rev
@@ -193,21 +315,20 @@ class Project:
     # answering yes in `archplan export`.
 
     def trusted(self) -> bool:
+        return self.trust_state()[0]
+
+    def trust_state(self) -> tuple:
+        """(approved, changed files): see project.trust_state."""
         cmd = self.export_command()
-        return bool(cmd) and command_hash(self.root, cmd) in (read_json(trust_path(), {}) or {}).get("commands", [])
+        if not cmd:
+            return False, []
+        return trust_state(self.root, "commands", command_hash(self.root, cmd), cmd)
 
     def trust(self) -> None:
         cmd = self.export_command()
         if not cmd:
             raise ProjectError("no export command to trust")
-        tp = trust_path()
-        tp.parent.mkdir(parents=True, exist_ok=True)
-        data = read_json(tp, {}) or {}
-        data.setdefault("commands", [])
-        h = command_hash(self.root, cmd)
-        if h not in data["commands"]:
-            data["commands"].append(h)
-            write_json(tp, data)
+        record_trust(self.root, "commands", command_hash(self.root, cmd), cmd)
 
     def export(self, timeout: float = 600, require_trust: bool = False) -> dict:
         """Run the configured exporter in the project root. The command writes the
@@ -215,9 +336,11 @@ class Project:
         cmd = self.export_command()
         if not cmd:
             raise ProjectError(f"no export command in {self.dir / 'config.json'}")
-        if require_trust and not self.trusted():
+        ok, changed = self.trust_state() if require_trust else (True, [])
+        if not ok:
             raise UntrustedExport(
-                f"the export command in .archplan/config.json is not approved on this machine: {cmd!r}. "
+                f"the export command in .archplan/config.json is not approved on this machine: {cmd!r}"
+                f"{changed_note(changed)}. "
                 "A person must run `archplan trust` (or `archplan export`) in a terminal once.")
         env = os.environ.copy()
         pkg_parent = str(Path(__file__).resolve().parent.parent)
@@ -241,6 +364,11 @@ class Project:
         if not m.get("vocabulary"):
             from .vocab import enrich  # the vocabulary step for exporters that have none
             enrich(self)
+        from .schema import enrich as schema_enrich  # tables, owners and access, when a source is found
+        try:
+            schema_enrich(self)
+        except Exception as e:  # noqa: BLE001 - the schema is extra; a parse error must not fail the export
+            sys.stderr.write(f"archplan: schema step failed: {e!r}\n")
         return counts(m)
 
 
@@ -249,17 +377,49 @@ def counts(m: dict) -> dict:
 
 
 def detect_export(root: Path) -> str | None:
-    """A default export command for the languages archplan has an exporter for."""
-    out = shlex.quote(f"{DIR}/model.archmodel.json")
-    if (root / "go.mod").is_file():
-        return f"go run github.com/vloothuis/archplan/exporters/archplan-go@latest -o {out}"
-    if any((root / f).is_file() for f in ("pyproject.toml", "setup.py", "setup.cfg")):
-        return f"archplan export-python -o {out}"
-    mix = mix_dir(root)
-    if mix is not None:
-        c = f" -C {shlex.quote(str(mix))}" if str(mix) != "." else ""
-        return f"archplan export-elixir{c} -o {out}"
-    return None
+    """A default export command, from the exporter registry (contrib/exporters
+    and the project's .archplan/exporters): the highest-priority match that is
+    installed, else export-lite, else the highest-priority match."""
+    return detect(root)["command"]
+
+
+def detect(root: Path) -> dict:
+    from .exporters import survey
+    return survey(root, root / DIR, f"{DIR}/model.archmodel.json")
+
+
+JS_EXT = {".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte"}
+JS_SKIP = {"node_modules", "dist", "build", "coverage", "out", "vendor"}
+
+
+def js_sources(d: Path, limit: int = 5000) -> int:
+    """The number of JS and TS source files under d, outside node_modules and
+    build output, counted up to limit."""
+    n = 0
+    for dirpath, dirs, names in os.walk(d):
+        dirs[:] = [x for x in dirs if x not in JS_SKIP and not x.startswith(".")]
+        n += sum(1 for x in names if os.path.splitext(x)[1] in JS_EXT and not x.endswith(".config.js"))
+        if n >= limit:
+            break
+    return n
+
+
+def is_js_project(d: Path) -> bool:
+    return (d / "package.json").is_file() and ((d / "tsconfig.json").is_file() or js_sources(d, 1) > 0)
+
+
+def js_dir(root: Path) -> Path | None:
+    """The TypeScript or JavaScript project: the root when it has package.json
+    and tsconfig.json or sources, or else the direct subdirectory (such as
+    frontend/) that is one and has the most source files."""
+    if is_js_project(root):
+        return Path(".")
+    subs = [d for d in sorted(root.iterdir())
+            if d.is_dir() and not d.is_symlink() and not d.name.startswith(".") and d.name not in JS_SKIP
+            and is_js_project(d)]
+    if not subs:
+        return None
+    return max(subs, key=js_sources).relative_to(root)
 
 
 def mix_dir(root: Path) -> Path | None:
@@ -268,10 +428,11 @@ def mix_dir(root: Path) -> Path | None:
     if (root / "mix.exs").is_file():
         return Path(".")
     subs = [d for d in sorted(root.iterdir())
-            if d.is_dir() and not d.name.startswith(".") and (d / "mix.exs").is_file()]
+            if d.is_dir() and not d.is_symlink() and not d.name.startswith(".") and (d / "mix.exs").is_file()]
     if not subs:
         return None
-    return max(subs, key=lambda d: sum(1 for _ in (d / "lib").rglob("*.ex"))).relative_to(root)
+    from .safeio import files
+    return max(subs, key=lambda d: len(files(d / "lib", ".ex"))).relative_to(root)
 
 
 def init(root: Path, export: str | None = None, port: int | None = None, force: bool = False) -> Project:
@@ -280,12 +441,20 @@ def init(root: Path, export: str | None = None, port: int | None = None, force: 
     if cfg_path.exists() and not force:
         raise ProjectError(f"{cfg_path} exists (use --force to overwrite)")
     d.mkdir(parents=True, exist_ok=True)
+    found = None if export else detect(root.resolve())
     cfg = {"name": root.resolve().name, "model": f"{DIR}/model.archmodel.json",
-           "export": export or detect_export(root.resolve()), "port": port or DEFAULT_PORT}
+           "export": export or found["command"], "port": port or DEFAULT_PORT}
     write_json(cfg_path, cfg)
-    if cfg["export"]:
+    # Approved here: a command the person typed, or a built-in exporter that only
+    # reads the code. Not approved: a command from the repository's own
+    # .archplan/exporters, or a built-in exporter that runs repository code (the
+    # project's typescript package, mix.exs, the go toolchain). The person
+    # approves those with `archplan trust`.
+    if cfg["export"] and (export or (found["trusted_source"] and not found["runs_repo_code"])):
         Project(root).trust()
     gi = d / ".gitignore"
-    if not gi.exists():
-        gi.write_text(GITIGNORE)
-    return Project(root)
+    if not os.path.lexists(gi):
+        write_atomic(gi, GITIGNORE)
+    p = Project(root)
+    p.found = found
+    return p

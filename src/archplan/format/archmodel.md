@@ -25,6 +25,10 @@ JSON Schema: [`archmodel.schema.json`](archmodel.schema.json).
   "policy": { ... },
   "types": { "<id>": { ... } },
   "sequences": { "<id>": { ... } },
+  "signatures": [ ... ],
+  "literals": [ ... ],
+  "enums": [ ... ],
+  "schema": { ... },
   "vocabulary": { ... },
   "notes": { "<target>": "text" }
 }
@@ -71,6 +75,10 @@ Where the model came from, and how to check work against it.
 `commands` are what the plan puts into acceptance checks. `{path}` is replaced
 with a component path and `{ref}` with the base ref. All are optional.
 
+`capabilities` lists what the model contains: `components`, `deps`, `files`,
+`types`, `fields`, `calls`, `signatures`, `literals` and `schema`. See
+[`exporter-plugins.md`](exporter-plugins.md#capabilities).
+
 ## layers
 
 Ordered groups of components, outermost first. Used for grouping and colour.
@@ -109,7 +117,9 @@ not only those explained by the types section.
 ```
 
 `weight` is the number of files (or import sites) that cause the edge.
-`evidence` lists some of them as `file:line`.
+`evidence` lists some of them as `file:line`. `typeOnly`, when present, is
+how many of those files import only types along the edge (TypeScript's
+`import type`); such an edge disappears at run time.
 
 ## files
 
@@ -217,6 +227,130 @@ Ordered calls for one scenario, usually from traces.
   says how.
 - Labels must not contain argument values. Traces can carry secrets.
 
+## signatures
+
+Optional. Functions and methods with their parameters, for detectors that
+look for concepts the code passes around without a type of their own.
+
+```json
+"signatures": [
+  { "id": "internal/order.Service.Ship", "component": "order", "file": "internal/order/service.go",
+    "line": 40, "name": "Ship", "params": [{ "name": "status", "type": "string" }],
+    "returns": "error", "public": true }
+]
+```
+
+- `id` is the type or module ID, a dot, the function name (with the arity in
+  Elixir: `MyApp.Orders.ship/2`).
+- `type` and `returns` are free text in the source language, or `null` when
+  unknown.
+- `public` is false for private functions and methods (`defp`, a leading
+  underscore, `private`, or a function a TypeScript module does not export).
+
+## literals
+
+Optional. String values that act like enum members: the code compares them,
+switches on them, assigns them to a field, uses them as a default or passes
+them as a keyword argument. In Elixir, atoms count too, written without the
+colon.
+
+```json
+"literals": [
+  { "value": "paid", "component": "billing", "file": "billing/models.py", "line": 12,
+    "context": "compare", "field": "status" },
+  { "value": "draft", "component": "orders", "file": "orders/views.py", "line": 30,
+    "context": "arg", "field": "status", "target": "filter" }
+]
+```
+
+- `context` is `compare` (`==`, `===`, `!=`, `in` a literal list or set),
+  `case` (switch, case or match arms), `head` (a value an Elixir function
+  head matches on, such as a message or event name), `assign` (a field,
+  attribute, object or map key), `default` (a parameter default) or `arg` (a
+  keyword argument).
+- `field` names what the value is compared with or assigned to: a variable,
+  field or key name.
+- `target` names the function a default, keyword argument or function head
+  belongs to, such as `handle_event/3`.
+- Exporters keep only values without whitespace and at most 64 characters,
+  at most 200 per file, and leave out test files.
+
+## enums
+
+Optional. Declared value sets: enums, Django choices, TypeScript unions of
+string literals, Ecto.Enum fields and Elixir `@type` unions of atoms.
+
+```json
+"enums": [
+  { "name": "OrderStatus", "component": "orders", "file": "orders/models.py", "line": 8,
+    "values": ["draft", "paid", "sent"] }
+]
+```
+
+A union on a field or parameter is named after its owner: `Order.status`.
+
+## schema
+
+Optional. The database tables, which component owns each table, and which
+components read or write it.
+
+```json
+"schema": {
+  "sources": [{ "kind": "django" }, { "kind": "sql", "path": "db/structure.sql" }],
+  "tables": {
+    "orders": {
+      "columns": [
+        { "name": "id", "type": "bigint", "null": false, "default": "autoincrement" },
+        { "name": "state", "type": "varchar(10)", "null": false, "default": "draft",
+          "values": ["draft", "paid"] },
+        { "name": "customer_id", "type": "bigint", "null": false }
+      ],
+      "pk": ["id"],
+      "fks": [{ "columns": ["customer_id"], "to": "customers", "to_columns": ["id"],
+                "on_delete": "CASCADE" }],
+      "indexes": [{ "columns": ["customer_id", "state"], "unique": false }],
+      "checks": ["state_ok: state IN ('draft', 'paid')"],
+      "comment": "One row per checkout."
+    }
+  },
+  "enums": { "order_state": ["draft", "paid"] },
+  "maps": { "orders": { "type": "shop.models.Order", "component": "shop", "via": "type" } },
+  "access": [
+    { "component": "billing", "table": "orders", "mode": "write", "weight": 2,
+      "evidence": ["billing/pay.py:30", "billing/refund.py:12"] }
+  ]
+}
+```
+
+- `sources` lists where the tables came from. `kind` is `django`, `ecto`,
+  `rails`, `prisma`, `sql`, `sqlite` or `postgres`. A source that was found
+  but not used has a `skipped` reason, such as a `structure.sql` that is
+  older than the migrations.
+- A table key is the table name. A table outside the default schema keeps
+  its schema prefix: `audit.events`.
+- `type` is the column type as the source writes it, in lower case.
+  `values` lists the allowed values: a database enum, a check constraint
+  such as `IN ('a', 'b')`, Django `choices`, `Ecto.Enum` or Rails `enum`.
+- `maps` gives each table an owner `component`. `type` is the ORM type that
+  maps the table, when the model has it. `via` says how the owner was found:
+  `type` (the ORM type's component), `file` (the component of the file that
+  declares the table), `writes` (the component whose code writes it most) or
+  `join table` (the owner of the table that declares the many-to-many
+  relation). A table without an owner has no entry.
+- `access` lists who uses a table. `mode` is `orm` (a file refers to the
+  table's ORM type), `write` (that file also creates, updates or deletes
+  rows of the type) or `read` and `write` from raw SQL (`FROM`, `JOIN`,
+  `INSERT INTO`, `UPDATE`, `DELETE FROM`). `weight` is the number of files.
+  Test factories, seeds and fixtures do not count as writers.
+
+When an exporter writes no `schema` section, archplan adds one after the
+export, from the sources it finds in the repository without a database:
+Django models, Ecto schemas (with `priv/repo/migrations` for the columns
+the schemas leave out), `db/schema.rb`, `schema.prisma`, and `schema.sql`
+or `structure.sql`, which can be `pg_dump --schema-only` output. A live
+database is read only on request, with `archplan schema --sqlite FILE` or
+`archplan schema --postgres --url-env VAR`.
+
 ## vocabulary
 
 The domain language of the code: which component owns which concept, and
@@ -277,12 +411,38 @@ Notes in the target model become open questions in the plan.
 
 | | Go | Elixir | Python | TypeScript |
 |---|---|---|---|---|
-| component | package, or a go-arch-lint component | OTP app, or a `boundary` | package | directory, or workspace package |
-| dependencies | `go list -json` imports | `mix xref graph` | `grimp` / import graph | `dependency-cruiser --output-type json` |
+| component | package, or a go-arch-lint component | OTP app, or a `boundary` | package | directory under `src`; npm packages as external components |
+| dependencies | `go list -json` imports | `mix xref graph` | `grimp` / import graph | TypeScript compiler API: imports, re-exports, `import()` |
 | policy | `.go-arch-lint.yml`, depguard | `boundary` deps and exports | import-linter contracts | dependency-cruiser `forbidden` rules |
-| types | `go/types` | structs, `@type`, behaviours as interfaces | classes, dataclasses, `Protocol` and ABCs as interfaces | classes, interfaces, type aliases (ts-morph) |
-| implements | structural (`types.Implements`) | `@behaviour` | base classes, Protocol conformance | `implements`, structural if checked |
+| types | `go/types` | structs, `@type`, behaviours as interfaces | classes, dataclasses, `Protocol` and ABCs as interfaces | classes, interfaces, type aliases, enums, exported functions; React components as functions, Vue and Svelte files as modules |
+| implements | structural (`types.Implements`) | `@behaviour` | base classes, Protocol conformance | `extends` and `implements` |
 | sequences | seqtrace, OpenTelemetry | `:telemetry`, OpenTelemetry | OpenTelemetry, `sys.setprofile` | OpenTelemetry |
+
+The `lite` exporter (`archplan export-lite`) covers Java, Kotlin, Scala, C#,
+PHP, Ruby, Rust and Swift with regular expressions:
+
+- **Components** are the declared package or namespace (Java, Kotlin, Scala,
+  C#, PHP), else the folder (Ruby, Rust, Swift).
+- **Types** are class, interface, record, enum, struct, trait, protocol,
+  object and module declarations. Fields come from simple member
+  declarations and constructor parameters.
+- **File references** come from imports resolved to project files, and from
+  type names used in a file that its own package or an imported package
+  declares.
+  - Ruby: `require`, `require_relative` and Zeitwerk naming.
+  - PHP: `use` and the PSR-4 map in `composer.json`.
+  - Rust: `mod` and `use crate::`, `self::`, `super::` and workspace crate
+    names.
+  - Swift: types of the same target, and of targets the file imports.
+- **Limits:**
+  - It misses fully qualified names in code, reflection, configuration-based
+    wiring, macros and generated code, and Ruby constants found only through
+    nesting.
+  - A local name that equals a type name in scope counts as a reference.
+  - It has no methods and no sequences.
+
+Use it to get started. Use a compiler-based exporter where precision
+matters.
 
 OpenTelemetry spans map to sequences in every language: a span is a message
 from the parent span's service or component to its own, and the span tree

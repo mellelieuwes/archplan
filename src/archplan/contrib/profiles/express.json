@@ -1,0 +1,133 @@
+{
+  "name": "express",
+  "title": "Express app",
+  "language": "javascript",
+  "description": "Express: src/ (or server/) with routes, controllers, services and models folders. Routes call controllers, controllers call services, models stay low.",
+  "detect": {
+    "priority": 20,
+    "deps": [
+      "express"
+    ],
+    "files": [
+      "**/*.*"
+    ]
+  },
+  "units": [
+    {
+      "kind": "App",
+      "glob": "**/src",
+      "require": [
+        "routes/",
+        "controllers/",
+        "routers/"
+      ],
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    {
+      "kind": "App",
+      "glob": "**/server",
+      "require": [
+        "routes/",
+        "controllers/",
+        "routers/"
+      ],
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "routes",
+      "patterns": [
+        "**/routes/**",
+        "**/routers/**",
+        "*.routes.*",
+        "*.router.*"
+      ],
+      "name": "Routes"
+    },
+    {
+      "id": "controllers",
+      "patterns": [
+        "**/controllers/**",
+        "*.controller.*"
+      ],
+      "name": "Controllers"
+    },
+    {
+      "id": "services",
+      "patterns": [
+        "**/services/**",
+        "*.service.*"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "models",
+      "patterns": [
+        "**/models/**",
+        "*.model.*"
+      ],
+      "name": "Models"
+    },
+    {
+      "id": "middleware",
+      "patterns": [
+        "**/middleware/**",
+        "**/middlewares/**"
+      ],
+      "name": "Middleware"
+    }
+  ],
+  "rules": [
+    {
+      "id": "models-stay-low",
+      "type": "calls",
+      "from": "models",
+      "to": [
+        "routes",
+        "controllers",
+        "services"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Models do not import routes, controllers or services"
+    },
+    {
+      "id": "services-not-http",
+      "type": "calls",
+      "from": "services",
+      "to": [
+        "routes",
+        "controllers"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Services do not import routes or controllers"
+    },
+    {
+      "id": "controllers-not-routes",
+      "type": "calls",
+      "from": "controllers",
+      "to": "routes",
+      "allow": false,
+      "scope": "any",
+      "text": "Controllers do not import routes"
+    }
+  ]
+}

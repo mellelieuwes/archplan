@@ -1,0 +1,159 @@
+{
+  "name": "angular",
+  "title": "Angular app",
+  "language": "typescript",
+  "description": "Angular: one unit per folder under src/app (and src/app/features/*). Roles come from the file-name suffixes the Angular CLI uses. Services and models do not depend on components.",
+  "detect": {
+    "priority": 60,
+    "deps": [
+      "@angular/core"
+    ],
+    "files": [
+      "**/src/app/**"
+    ]
+  },
+  "units": [
+    {
+      "kind": "Feature",
+      "glob": "**/src/app/*",
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    {
+      "kind": "Feature",
+      "glob": "**/src/app/features/*",
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "component",
+      "patterns": [
+        "*.component.ts"
+      ],
+      "name": "Components"
+    },
+    {
+      "id": "service",
+      "patterns": [
+        "*.service.ts"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "module",
+      "patterns": [
+        "*.module.ts"
+      ],
+      "name": "Modules"
+    },
+    {
+      "id": "routing",
+      "patterns": [
+        "*-routing.module.ts",
+        "*.routes.ts"
+      ],
+      "name": "Routing"
+    },
+    {
+      "id": "guard",
+      "patterns": [
+        "*.guard.ts",
+        "*.resolver.ts",
+        "*.interceptor.ts"
+      ],
+      "name": "Guards and interceptors"
+    },
+    {
+      "id": "pipe",
+      "patterns": [
+        "*.pipe.ts",
+        "*.directive.ts"
+      ],
+      "name": "Pipes and directives"
+    },
+    {
+      "id": "store",
+      "patterns": [
+        "*.store.ts",
+        "*.reducer.ts",
+        "*.effects.ts",
+        "*.actions.ts",
+        "*.selectors.ts",
+        "*.state.ts"
+      ],
+      "name": "State"
+    },
+    {
+      "id": "model",
+      "patterns": [
+        "*.model.ts",
+        "*.interface.ts",
+        "*.types.ts",
+        "*.enum.ts",
+        "models/**"
+      ],
+      "name": "Models"
+    }
+  ],
+  "rules": [
+    {
+      "id": "services-not-components",
+      "type": "calls",
+      "from": [
+        "service",
+        "guard",
+        "store",
+        "pipe"
+      ],
+      "to": [
+        "component",
+        "routing"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Services, guards, pipes and state do not import components"
+    },
+    {
+      "id": "models-stay-low",
+      "type": "calls",
+      "from": "model",
+      "to": [
+        "component",
+        "service",
+        "module",
+        "store"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Models import no components, services, modules or state"
+    },
+    {
+      "id": "components-not-routing",
+      "type": "calls",
+      "from": "component",
+      "to": [
+        "routing",
+        "module"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Components do not import modules or routing"
+    }
+  ]
+}

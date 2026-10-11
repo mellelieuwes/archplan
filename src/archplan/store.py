@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 import re
 import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from .project import write_json
+from .project import MAX_JSON, write_json
+from .safeio import read_bytes
 
 
 class NotFound(KeyError):
@@ -46,7 +48,10 @@ class JsonStore:
 
     @contextmanager
     def locked(self):
-        with open(self.lock_path, "a") as lf:
+        # O_NOFOLLOW and O_NONBLOCK: a lock file planted by the repository as a
+        # symlink or a FIFO fails instead of redirecting or hanging.
+        fd = os.open(self.lock_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
+        with os.fdopen(fd, "a") as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
             try:
                 yield
@@ -55,7 +60,7 @@ class JsonStore:
 
     def read(self) -> dict:
         try:
-            return json.loads(self.path.read_text())
+            return json.loads(read_bytes(self.path, MAX_JSON))
         except FileNotFoundError:
             return {"version": 0, **json.loads(json.dumps(self.empty))}
 

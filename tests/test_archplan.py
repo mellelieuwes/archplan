@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import shutil
 import unittest.mock
 import subprocess
 import sys
@@ -92,6 +93,31 @@ class PyExportTest(TempProject):
         self.assertEqual(inv["fields"], [{"name": "payer", "ref": "shop.billing.invoice.Payer"}])
         self.assertEqual(inv["uses"], ["shop.orders.model.Order"])
 
+    def test_signatures_literals_enums(self):
+        write(self.root, {"shop/status.py": textwrap.dedent("""\
+            import enum
+            from django.db import models
+            class Status(enum.Enum):
+                OPEN = "open"
+                SHUT = "shut"
+            class Kind(models.TextChoices):
+                A = "a", "A"
+                B = "b", "B"
+            def close(order, reason: str = "manual") -> bool:
+                if order.status in ("open", "held"):
+                    order.status = "shut"
+                    return save(order, mode="fast")
+                return order.kind != "b"
+            """)})
+        m = export(self.root)
+        sig = next(s for s in m["signatures"] if s["id"] == "shop.status.close")
+        self.assertEqual((sig["params"], sig["returns"], sig["public"]),
+                         ([{"name": "order", "type": None}, {"name": "reason", "type": "str"}], "bool", True))
+        lits = {(x["value"], x["context"], x.get("field")) for x in m["literals"] if x["file"].endswith("status.py")}
+        self.assertTrue({("manual", "default", "reason"), ("open", "compare", "status"), ("held", "compare", "status"),
+                         ("shut", "assign", "status"), ("fast", "arg", "mode"), ("b", "compare", "kind")} <= lits)
+        self.assertEqual({e["name"]: e["values"] for e in m["enums"]}, {"Status": ["open", "shut"], "Kind": ["a", "b"]})
+
     def test_tests_are_skipped_by_default(self):
         self.assertNotIn("tests", export(self.root)["components"])
         self.assertIn("tests.test_x", export(self.root, tests=True, granularity="module")["components"])
@@ -127,6 +153,108 @@ class DetectTest(unittest.TestCase):
                              "archplan export-elixir -C core -o .archplan/model.archmodel.json")
             write(root, {"mix.exs": ""})
             self.assertEqual(project.detect_export(root), "archplan export-elixir -o .archplan/model.archmodel.json")
+
+    def test_typescript_in_root_or_subdirectory(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            write(root, {"frontend/package.json": "{}", "frontend/src/a.ts": "", "docs/package.json": "{}"})
+            self.assertEqual(project.detect_export(root), "archplan export-ts -C frontend -o .archplan/model.archmodel.json")
+            write(root, {"package.json": "{}", "tsconfig.json": "{}"})
+            self.assertEqual(project.detect_export(root), "archplan export-ts -o .archplan/model.archmodel.json")
+
+
+TS_MODULES = Path(os.environ.get("ARCHPLAN_TS_MODULES", "/Users/jeroen/Work/sourcehaven/rela/frontend/node_modules"))
+TS_SAMPLE = {
+    "package.json": '{"name": "shop", "dependencies": {"react": "*"}}',
+    "tsconfig.json": '{"compilerOptions": {"jsx": "preserve", "strict": true, "moduleResolution": "bundler",'
+                     ' "module": "esnext", "paths": {"@/*": ["./src/*"]}}, "include": ["src"]}',
+    "src/main.tsx": "import { Cart } from '@/components/Cart';\nexport const app = Cart;\n",
+    "src/models/index.ts": "export { Order } from './order';\nexport type { Payer } from './payer';\n",
+    "src/models/order.ts": "import type { Payer } from './payer';\n"
+                           "export class Order implements Payer {\n  lines: Line[] = [];\n  pay(): void {}\n}\n"
+                           "export interface Line { sku: string }\n",
+    "src/models/payer.ts": "export interface Payer { pay(): void }\n",
+    "src/components/Cart.tsx": "import React from 'react';\nimport { Order } from '../models';\n"
+                               "import type { Payer } from '@/models/payer';\n"
+                               "export function Cart(props: { order: Order; payer?: Payer }) {\n"
+                               "  return <div>{props.order.lines.length}</div>;\n}\n",
+    "src/components/Cart.test.tsx": "import { Cart } from './Cart';\nCart;\n",
+    "src/models/status.ts": "export type Status = 'open' | 'closed';\n"
+                            "export function isOpen(s: Status = 'open', n = 1) {\n"
+                            "  switch (s) { case 'closed': return false; }\n  return s === 'open' && n > 0;\n}\n",
+}
+
+
+@unittest.skipUnless(shutil.which("mix"), "needs mix")
+class ElixirValuesTest(unittest.TestCase):
+    def test_signatures_literals_enums(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            write(root, {"mix.exs": "defmodule Shop.MixProject do\n  use Mix.Project\n"
+                                    "  def project, do: [app: :shop, version: \"0.1.0\"]\nend\n",
+                         "lib/order.ex": textwrap.dedent("""\
+                             defmodule Shop.Order do
+                               @type status :: :draft | :paid
+                               @spec advance(map(), String.t()) :: atom()
+                               def advance(%{status: :draft}, "pay"), do: :paid
+                               def advance(order, _event), do: order.status
+                               def label(order) do
+                                 case order.kind do
+                                   :retail -> "Retail"
+                                   _ -> nil
+                                 end
+                               end
+                             end
+                             """)})
+            wrapper = ROOT / "src" / "archplan" / "elixir" / "archplan-elixir"
+            out = subprocess.run(["sh", str(wrapper), "export", "-o", "m.json", "--root", str(root)], cwd=root,
+                                 capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr[-2000:])
+            m = json.loads((root / "m.json").read_text())
+        sig = next(s for s in m["signatures"] if s["id"] == "Shop.Order.advance/2")
+        self.assertEqual((sig["params"], sig["returns"]),
+                         ([{"name": "order", "type": "map()"}, {"name": "event", "type": "String.t()"}], "atom()"))
+        lits = {(x["value"], x["context"], x.get("field") or x.get("target")) for x in m["literals"]}
+        self.assertEqual(lits, {("draft", "case", "status"), ("pay", "head", "advance/2"), ("retail", "case", "kind")})
+        self.assertEqual([e["values"] for e in m["enums"]], [["draft", "paid"]])
+
+
+@unittest.skipUnless(shutil.which("node") and (TS_MODULES / "typescript").is_dir(), "needs node and typescript")
+class TsExportTest(TempProject):
+    def test_components_dependencies_types_files(self):
+        root = Path(self.tmp.name) / "web"
+        write(root, TS_SAMPLE)
+        out = subprocess.run([sys.executable, "-m", "archplan", "export-ts"], cwd=root, capture_output=True, text=True,
+                             env={**os.environ, "NODE_PATH": str(TS_MODULES), "PYTHONPATH": str(ROOT / "src")})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        m = json.loads(out.stdout)
+        comps = m["components"]
+        self.assertEqual({c for c, v in comps.items() if v["kind"] == "internal"}, {"src", "models", "components"})
+        self.assertEqual(comps["react"]["kind"], "external")
+        self.assertEqual(comps["src"]["match"], ["src/main.tsx"])
+        deps = {(d["from"], d["to"]): d for d in m["dependencies"]}
+        self.assertEqual(set(deps), {("src", "components"), ("components", "models"), ("components", "react")})
+        self.assertEqual(deps[("components", "models")]["evidence"], ["src/components/Cart.tsx:2"])
+        # the barrel import resolves to order.ts; the test file is in files, not in dependencies
+        self.assertEqual(m["files"]["src/components/Cart.tsx"]["refs"],
+                         [{"to": "src/models/order.ts", "line": 2}, {"to": "src/models/payer.ts", "line": 3}])
+        self.assertIn("src/components/Cart.test.tsx", m["files"])
+        self.assertNotIn("typeOnly", deps[("components", "models")])  # Order is a value import
+        order = m["types"]["models/order.Order"]
+        self.assertEqual(order["implements"], ["models/payer.Payer"])
+        self.assertEqual(order["fields"], [{"name": "lines", "ref": "models/order.Line", "many": True}])
+        cart = m["types"]["components/Cart.Cart"]
+        self.assertEqual((cart["kind"], cart.get("doc")), ("function", "React component"))
+        self.assertEqual(cart["fields"], [{"name": "order", "ref": "models/order.Order"},
+                                          {"name": "payer", "ref": "models/payer.Payer"}])
+        sig = next(s for s in m["signatures"] if s["id"] == "models/status.isOpen")
+        self.assertEqual((sig["params"], sig["returns"], sig["public"]),
+                         ([{"name": "s", "type": "Status"}, {"name": "n", "type": "number"}], "boolean", True))
+        lits = {(x["value"], x["context"], x.get("field")) for x in m["literals"] if x["file"] == "src/models/status.ts"}
+        self.assertEqual(lits, {("open", "default", "s"), ("closed", "case", "s"), ("open", "compare", "s")})
+        self.assertIn({"name": "Status", "component": "models", "file": "src/models/status.ts", "line": 1,
+                       "values": ["open", "closed"]}, m["enums"])
+        self.assertIn("literals", m["source"]["capabilities"])
 
 
 class TrustTest(TempProject):
@@ -687,8 +815,10 @@ class ArchitectureTest(unittest.TestCase):
                 "src/proj/billing/admin.py": ["src/proj/shop/views.py"],  # another app's views: a break
                 "src/proj/shop/api/serializers.py": ["src/proj/shop/api/viewsets.py", "src/proj/billing/models/invoice.py"]}
         m = {"components": {}, "types": {}, "files": {f: {"refs": [{"to": t} for t in refs.get(f, [])]} for f in files}}
-        self.assertTrue(A.is_django(files))
-        self.assertFalse(A.is_django(["src/a/apps.py", "src/a/models.py"]))
+        from archplan import frameworks as F
+        dj = F.load()[0]["django"]
+        self.assertTrue(F.detects(dj, F.Context(files)))
+        self.assertFalse(F.detects(dj, F.Context(["src/a/apps.py", "src/a/models.py"])))
         p = A.infer(m)
         self.assertEqual(p["source"], "django")
         self.assertEqual(p["units"][0]["glob"], "src/proj/**")
@@ -761,10 +891,10 @@ class ArchitectureApiTest(TempProject):
 
 
 def findings_model(ab=5):
-    """Four components with a 2-cycle (A, D) and a 3-cycle (A, B, C), a type
+    """Five components with a 2-cycle (D, E) and a 3-cycle (A, B, C), a type
     with groups of related fields and two types that share their fields."""
-    comps = {c: {"name": c, "path": f"lib/{c.lower()}", "match": [f"lib/{c.lower()}/**"]} for c in "ABCD"}
-    deps = [("A", "B", ab), ("B", "C", 1), ("C", "A", 3), ("A", "D", 2), ("D", "A", 4)]
+    comps = {c: {"name": c, "path": f"lib/{c.lower()}", "match": [f"lib/{c.lower()}/**"]} for c in "ABCDEFGHIJ"}
+    deps = [("A", "B", ab), ("B", "C", 1), ("C", "A", 3), ("D", "E", 2), ("E", "D", 4)]
     fld = lambda *names: [{"name": n, "type": "string"} for n in names]
     types = {
         "A.User": {"name": "User", "component": "A", "kind": "struct", "file": "lib/a/user.ex", "line": 3,
@@ -791,8 +921,8 @@ class FindingsTest(TempProject):
         m = findings_model()
         self.assertEqual(sorted(sccs("ABCDE", {("A", "B"), ("B", "A"), ("C", "D")})), [["A", "B"], ["C"], ["D"], ["E"]])
         cyc = {tuple(f["evidence"]["cycle"]): f for f in cycle_findings(m)}
-        self.assertEqual(set(cyc), {("A", "D"), ("A", "B", "C")})
-        self.assertEqual(cyc[("A", "D")]["evidence"]["cut"]["from"], "A")
+        self.assertEqual(set(cyc), {("D", "E"), ("A", "B", "C")})
+        self.assertEqual(cyc[("D", "E")]["evidence"]["cut"]["from"], "D")
         abc = cyc[("A", "B", "C")]
         self.assertEqual((abc["evidence"]["cut"]["from"], abc["evidence"]["cut"]["to"], abc["evidence"]["cut"]["weight"]),
                          ("B", "C", 1))
@@ -803,7 +933,8 @@ class FindingsTest(TempProject):
         from archplan.findings import analyse
         ids = lambda m: {f["id"]: f["kind"] for f in analyse(self.p)[0]}
         before = ids(None)
-        self.assertEqual(sorted(set(before.values())), ["structure.cycle", "types.fields", "types.synonyms"])
+        self.assertEqual(sorted(set(before.values())),
+                         ["concepts.raw_ids", "structure.cycle", "types.fields", "types.synonyms"])
         self.p.model_path.write_text(json.dumps(findings_model(ab=50)))  # counts change, the findings do not
         os.utime(self.p.model_path, (1, 1))
         self.assertEqual(ids(None), before)
@@ -838,9 +969,9 @@ class FindingsTest(TempProject):
         self.assertEqual(Findings(self.p).get(b)["label"], "likely the same")
         # a baselined finding that leaves the code counts as fixed
         m = findings_model()
-        m["dependencies"] = [d for d in m["dependencies"] if (d["from"], d["to"]) != ("D", "A")]
+        m["dependencies"] = [d for d in m["dependencies"] if (d["from"], d["to"]) != ("E", "D")]
         self.p.model_path.write_text(json.dumps(m))
-        cyc = next(f for f in fs if f["kind"] == "structure.cycle" and f["evidence"]["cycle"] == ["A", "D"])
+        cyc = next(f for f in fs if f["kind"] == "structure.cycle" and f["evidence"]["cycle"] == ["D", "E"])
         F.decide(cyc["id"], "accepted", "") if cyc["id"] != b else None
         os.utime(self.p.model_path, (2, 2))
         self.assertEqual(Findings(self.p).listing()["counts"]["fixed"], 1)
@@ -1092,7 +1223,8 @@ class BriefTest(TempProject):
         self.p.model_path.write_text(json.dumps(m))
         project.write_json(self.p.path("hotspots.json"), {"result": {
             "head": "x", "since_days": 365, "components": {"A": {"commits": 40}, "B": {"commits": 30},
-                                                           "C": {"commits": 2}, "D": {"commits": 1}},
+                                                           "C": {"commits": 2}, "D": {"commits": 1},
+                                                           "E": {"commits": 1}},
             "pairs": []}})
         self.agent = Agent(self.p)
 
@@ -1110,7 +1242,7 @@ class BriefTest(TempProject):
         self.assertEqual(set(abc["findings"]), {ids["structure.cycle:ABC"], ids["layers.policy:BC"]})
         self.assertEqual(abc["facts"]["cut"], "B → C")
         self.assertTrue(any("remove_dependency B → C" in m for m in abc["moves"]))
-        self.assertIn("structure.cycle:AD", ops)
+        self.assertIn("structure.cycle:DE", ops)
         self.assertIn("types.fields:A", ops)
         self.assertEqual(b["opportunities"][0]["id"], abc["id"])  # cycle + policy, most churn
         self.assertEqual(abc["churn"], {"A": 40, "B": 30, "C": 2})
@@ -1118,7 +1250,7 @@ class BriefTest(TempProject):
         self.assertEqual(brief(self.p)["opportunities"][0]["id"], abc["id"])  # stable id
         self.assertEqual({o["kind"] for o in brief(self.p, kinds=["types"])["opportunities"]},
                          {"types.fields", "types.synonyms"})
-        self.assertEqual({tuple(o["components"]) for o in brief(self.p, focus=["D"])["opportunities"]}, {("A", "D")})
+        self.assertEqual({tuple(o["components"]) for o in brief(self.p, focus=["D"])["opportunities"]}, {("D", "E")})
         self.assertLess(len(json.dumps(b)), 24000)
 
     def test_verify_cycle(self):
@@ -1138,15 +1270,14 @@ class BriefTest(TempProject):
         # an opportunity with a pending proposal leaves the brief
         self.assertNotIn(cyc, [i for o in brief(self.p)["opportunities"] for i in o["findings"]])
         self.assertEqual(brief(self.p)["excluded_with_pending_proposal"], 2)  # the cycle and the large type
-        # A move that makes a new cycle: D.Thing refers to B.Member, so moving Member into C adds the
-        # type edge D -> C, which closes A -> D -> C -> A.
+        # A move that makes a new cycle: E.Thing refers to B.Member, so moving Thing into C adds the
+        # type edge C -> B next to B -> C.
         t = json.loads(self.p.model_path.read_text())
-        t["types"]["D.Thing"] = {"name": "Thing", "component": "D", "kind": "struct",
+        t["types"]["E.Thing"] = {"name": "Thing", "component": "E", "kind": "struct",
                                  "fields": [{"name": "member", "ref": "B.Member"}]}
-        t["dependencies"] = [d for d in t["dependencies"] if (d["from"], d["to"]) != ("D", "A")]
         self.p.target_path.write_text(json.dumps(t))
-        v = verify(self.p, [{"op": "move_type", "type": "B.Member", "to": "C"}], [])
-        self.assertEqual(v["introduced"], ["A → D → C → A form a dependency cycle."])
+        v = verify(self.p, [{"op": "move_type", "type": "E.Thing", "to": "C"}], [])
+        self.assertIn("B → C → B form a dependency cycle.", v["introduced"])
         for bad in ([], "x"):
             with self.assertRaises(ValueError):
                 self.agent.propose_refactor("t", "r", bad)
@@ -1212,27 +1343,28 @@ class BriefTest(TempProject):
         self.assertIsNone(brief.status(self.p, store)["open_request"])
         # a model change with new findings, within the hour: rate limited
         m = json.loads(self.p.model_path.read_text())
-        m["dependencies"].append({"from": "C", "to": "D", "weight": 1})
-        m["dependencies"].append({"from": "D", "to": "C", "weight": 1})
+        m["dependencies"].append({"from": "F", "to": "G", "weight": 1})
+        m["dependencies"].append({"from": "G", "to": "F", "weight": 1})
         self.p.model_path.write_text(json.dumps(m))
         self.assertIsNone(brief.auto_tick(self.p, store, t0 + 60))
         # the findings were seen; a later tick has no new reason
         self.assertIsNone(brief.auto_tick(self.p, store, t0 + 7200))
         # pending refactors dropping to zero is a reason
         ids = self.ids()
-        sid = self.agent.propose_refactor("Cut", "Why.", [{"op": "remove_dependency", "from": "D", "to": "C"}],
-                                          [ids["structure.cycle:CD"]])["suggestion"]
+        sid = self.agent.propose_refactor("Cut", "Why.", [{"op": "remove_dependency", "from": "G", "to": "F"}],
+                                          [ids["structure.cycle:FG"]])["suggestion"]
         self.assertIsNone(brief.auto_tick(self.p, store, t0 + 7300))
         Suggestions(self.p.dir).decide(self.p, sid, [], "no")
         th2 = brief.auto_tick(self.p, store, t0 + 7400)
         self.assertIn("No refactor suggestion is pending", th2["messages"][0]["text"])
         # a new model with new findings opens one too, once the hour has passed
         store.reply(th2["id"], "Done.", "agent")
-        m["dependencies"].append({"from": "B", "to": "D", "weight": 1})
-        m["dependencies"].append({"from": "D", "to": "B", "weight": 1})
+        m["dependencies"].append({"from": "H", "to": "I", "weight": 1})
+        m["dependencies"].append({"from": "I", "to": "H", "weight": 1})
         self.p.model_path.write_text(json.dumps(m))
         self.assertIsNone(brief.auto_tick(self.p, store, t0 + 7500))
-        m["dependencies"].append({"from": "C", "to": "B", "weight": 1})
+        m["dependencies"].append({"from": "I", "to": "J", "weight": 1})
+        m["dependencies"].append({"from": "J", "to": "I", "weight": 1})
         self.p.model_path.write_text(json.dumps(m))
         th3 = brief.auto_tick(self.p, store, t0 + 7400 + 3601)
         self.assertIn("new finding", th3["messages"][0]["text"])
@@ -1263,6 +1395,975 @@ class BriefTest(TempProject):
         finally:
             srv.shutdown()
             srv.server_close()
+
+
+def tangle_model(extra=()):
+    """A hub H in 2-cycles with M1..M5 (plus M1 -> M2), and extra members."""
+    names = ["H", "M1", "M2", "M3", "M4", "M5", *extra]
+    comps = {c: {"name": c, "path": f"lib/{c.lower()}"} for c in names}
+    deps = [("H", c, 3) for c in names[1:]] + [(c, "H", 1 + i) for i, c in enumerate(names[1:])] + [("M1", "M2", 2)]
+    return {"format": "archmodel/1", "components": comps, "types": {},
+            "dependencies": [{"from": a, "to": b, "weight": w, "evidence": [f"lib/{a.lower()}/x.ex:{w}"]}
+                             for a, b, w in deps]}
+
+
+class TangleTest(TempProject):
+    def setUp(self):
+        super().setUp()
+        self.p = project.init(self.root)
+        self.p.model_path.write_text(json.dumps(tangle_model()))
+
+    def tangle(self, fs):
+        (t,) = [f for f in fs if f["kind"] == "structure.tangle"]
+        self.assertEqual([f for f in fs if f["kind"] == "structure.cycle"], [])
+        return t
+
+    def test_one_finding_per_tangle(self):
+        from archplan.findings import cycle_findings, sccs
+        t = self.tangle(cycle_findings(tangle_model()))
+        e = t["evidence"]
+        self.assertEqual(t["title"], "H and 5 other components form one dependency tangle.")
+        self.assertEqual((e["size"], e["hub"], e["members"], t["strength"]), (6, "H", ["H", "M1", "M2", "M3", "M4", "M5"],
+                                                                              "strong"))
+        self.assertEqual((e["cycles"], len(e["two_cycles"]), e["cut_count"]), (6, 5, 5))
+        self.assertEqual(e["cut_weight"], sum(c["weight"] for c in e["cuts"]))
+        self.assertEqual(e["cuts"][0], {"from": "M1", "to": "H", "weight": 1, "evidence": ["lib/m1/x.ex:1"]})
+        self.assertIn("Cutting 5 dependencies (12 references) breaks every cycle", t["detail"])
+        # an SCC of three stays cycles
+        small = {**tangle_model(), "dependencies": [d for d in tangle_model()["dependencies"]
+                                                    if {d["from"], d["to"]} <= {"H", "M1", "M2"}]}
+        self.assertEqual({f["kind"] for f in cycle_findings(small)}, {"structure.cycle"})
+
+    def test_cuts_break_all_cycles(self):
+        import random
+        from archplan.findings import feedback_edges, sccs
+        for seed in range(30):
+            rnd = random.Random(seed)
+            n = rnd.randint(4, 25)
+            nodes = [f"c{i}" for i in range(n)]
+            w = {(a, b): rnd.randint(1, 9) for a in nodes for b in nodes if a != b and rnd.random() < 0.25}
+            cuts = feedback_edges(nodes, w)
+            rest = {e: x for e, x in w.items() if e not in set(cuts)}
+            self.assertTrue(all(len(c) == 1 for c in sccs(nodes, rest)), seed)
+            for e in cuts:  # minimal: every cut is needed
+                back = {**rest, e: w[e]}
+                self.assertTrue(any(len(c) > 1 for c in sccs(nodes, back)), seed)
+            self.assertEqual(cuts, sorted(cuts, key=lambda e: (w[e], e)))
+
+    def test_id_stable_and_baseline_growth(self):
+        from archplan.findings import Findings
+        F = Findings(self.p)
+        t = self.tangle(F.listing()["findings"])
+        F.decide(t["id"], "accepted")
+        self.assertEqual(json.loads(self.p.path("baseline.json").read_text())["findings"][t["id"]]["size"], 6)
+        self.p.model_path.write_text(json.dumps(tangle_model(["X"])))
+        os.utime(self.p.model_path, (5, 5))
+        t2 = self.tangle(Findings(self.p).listing()["findings"])
+        self.assertEqual((t2["id"], t2["state"], t2["grew"]), (t["id"], "new", {"from": 6, "to": 7}))
+        self.assertTrue(t2["detail"].startswith("Grew from 6 to 7 components. "))
+        # back to six members (one swapped): not grown, still accepted
+        m = tangle_model(["X"])
+        m["dependencies"] = [d for d in m["dependencies"] if d["from"] != "M5" and d["to"] != "M5"]
+        self.p.model_path.write_text(json.dumps(m))
+        os.utime(self.p.model_path, (6, 6))
+        self.assertEqual(self.tangle(Findings(self.p).listing()["findings"])["state"], "accepted")
+        # update_baseline takes the larger size
+        self.p.model_path.write_text(json.dumps(tangle_model(["X"])))
+        os.utime(self.p.model_path, (7, 7))
+        self.assertEqual(Findings(self.p).update_baseline()["added"], 1)
+        self.assertEqual(self.tangle(Findings(self.p).listing()["findings"])["state"], "accepted")
+
+    def test_verify_shrunk(self):
+        from archplan.brief import brief, verify
+        tid = self.tangle(Findings_(self.p))["id"]
+        v = verify(self.p, [{"op": "remove_dependency", "from": "M5", "to": "H"}], [tid])
+        self.assertEqual((v["shrunk"], v["fixed"], v["unverified"]), ([{"id": tid, "from": 6, "to": 5}], [], []))
+        ops = [{"op": "remove_dependency", "from": f"M{i}", "to": "H"} for i in range(1, 6)]
+        self.assertEqual(verify(self.p, ops, [tid])["fixed"], [tid])
+        o = brief(self.p)["opportunities"][0]
+        self.assertEqual((o["kind"], o["facts"]["hub"], o["facts"]["breaks_all"]), ("structure.tangle", "H",
+                                                                                  "5 cuts, 12 references"))
+        self.assertTrue(o["moves"][0].startswith("Cut M1 → H, 1 reference"))
+
+
+def Findings_(p):
+    from archplan.findings import Findings
+    return Findings(p).listing()["findings"]
+
+
+LITE = {'java': {'pom.xml': '<project><artifactId>spring-boot-starter-web</artifactId></project>',
+          'src/main/java/com/acme/shop/core/Order.java': 'package com.acme.shop.core;\n'
+                                                         '\n'
+                                                         'import java.util.List;\n'
+                                                         '\n'
+                                                         '/** An order. */\n'
+                                                         'public class Order extends Base implements Payable {\n'
+                                                         '    private final List<Line> lines;\n'
+                                                         '    private Customer customer;\n'
+                                                         '    private String note = "x; y";\n'
+                                                         '    public Order() {}\n'
+                                                         '}\n',
+          'src/main/java/com/acme/shop/core/Line.java': 'package com.acme.shop.core;\n'
+                                                        'public record Line(String sku, int qty) {}\n',
+          'src/main/java/com/acme/shop/core/Base.java': 'package com.acme.shop.core;\n'
+                                                        'public abstract class Base {}\n',
+          'src/main/java/com/acme/shop/core/Payable.java': 'package com.acme.shop.core;\n'
+                                                           'public interface Payable { void pay(); }\n',
+          'src/main/java/com/acme/shop/core/Customer.java': 'package com.acme.shop.core;\npublic class Customer {}\n',
+          'src/main/java/com/acme/shop/web/OrderController.java': 'package com.acme.shop.web;\n'
+                                                                  '\n'
+                                                                  'import com.acme.shop.core.Order;\n'
+                                                                  'import com.acme.shop.core.*;\n'
+                                                                  '\n'
+                                                                  '// Customer is mentioned in a comment only\n'
+                                                                  'public class OrderController {\n'
+                                                                  '    private Order order;\n'
+                                                                  '    String s = "Line";\n'
+                                                                  '    Payable p;\n'
+                                                                  '}\n',
+          'src/test/java/com/acme/shop/core/OrderTest.java': 'package com.acme.shop.core;\n'
+                                                             'class OrderTest { Order o; }\n'},
+ 'kotlin': {'src/main/kotlin/a/model/User.kt': 'package a.model\n'
+                                               '\n'
+                                               'data class User(val id: Long, val address: Address)\n',
+            'src/main/kotlin/a/model/Address.kt': 'package a.model\n\nclass Address(val street: String)\n',
+            'src/main/kotlin/a/api/UserApi.kt': 'package a.api\n'
+                                                '\n'
+                                                'import a.model.User\n'
+                                                '\n'
+                                                'class UserApi {\n'
+                                                '    fun get(): User? = null\n'
+                                                '}\n'},
+ 'csharp': {'Shop.Domain/Order.cs': 'namespace Shop.Domain;\n'
+                                    '\n'
+                                    'public class Order : Entity\n'
+                                    '{\n'
+                                    '    public Customer Buyer { get; set; }\n'
+                                    '    public List<OrderLine> Lines { get; } = new();\n'
+                                    '}\n',
+            'Shop.Domain/Entity.cs': 'namespace Shop.Domain;\n'
+                                     'public abstract class Entity { }\n'
+                                     'public record OrderLine(string Sku);\n',
+            'Shop.Domain/Customer.cs': 'namespace Shop.Domain\n{\n    public class Customer { }\n}\n',
+            'Shop.Web/Controllers/OrdersController.cs': 'using Shop.Domain;\n'
+                                                        'using System;\n'
+                                                        '\n'
+                                                        'namespace Shop.Web.Controllers;\n'
+                                                        '\n'
+                                                        'public class OrdersController : ControllerBase\n'
+                                                        '{\n'
+                                                        '    private readonly Order _order;\n'
+                                                        '}\n',
+            'Shop.Web/Shop.Web.csproj': '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>'},
+ 'php': {'composer.json': '{"require": {"laravel/framework": "^11"}, "autoload": {"psr-4": {"App\\\\": "app/"}}}',
+         'app/Models/User.php': '<?php\n'
+                                'namespace App\\Models;\n'
+                                '\n'
+                                'class User extends Model\n'
+                                '{\n'
+                                '    private ?Team $team;\n'
+                                '}\n',
+         'app/Models/Team.php': '<?php\nnamespace App\\Models;\nclass Team {}\n',
+         'app/Http/Controllers/UserController.php': '<?php\n'
+                                                    'namespace App\\Http\\Controllers;\n'
+                                                    '\n'
+                                                    'use App\\Models\\User;\n'
+                                                    'use App\\Models\\{Team};\n'
+                                                    '\n'
+                                                    'class UserController extends Controller\n'
+                                                    '{\n'
+                                                    '    public function show(User $u) {}\n'
+                                                    '}\n'},
+ 'ruby': {'Gemfile': "source 'https://rubygems.org'\ngem 'rails', '~> 7.1'\n",
+          'config/routes.rb': 'Rails.application.routes.draw do\nend\n',
+          'app/models/user.rb': 'class User < ApplicationRecord\n'
+                                '  has_many :posts\n'
+                                '  def admin? = Admin::Role.exists?\n'
+                                'end\n',
+          'app/models/admin/role.rb': 'module Admin\n  class Role < ApplicationRecord\n  end\nend\n',
+          'app/models/application_record.rb': 'class ApplicationRecord < ActiveRecord::Base\nend\n',
+          'app/controllers/users_controller.rb': "require_relative '../../lib/tools/clock'\n"
+                                                 '\n'
+                                                 'class UsersController < ApplicationController\n'
+                                                 '  def show\n'
+                                                 '    # User in a comment\n'
+                                                 '    @user = User.find(params[:id])\n'
+                                                 '  end\n'
+                                                 'end\n',
+          'lib/tools/clock.rb': 'module Tools\n  class Clock\n  end\nend\n'},
+ 'rust': {'Cargo.toml': '[package]\nname = "geo-kit"\nversion = "0.1.0"\n\n[dependencies]\nserde = "1"\n',
+          'src/lib.rs': 'pub mod shapes;\nmod util;\n\nuse crate::shapes::{circle::Circle, Square as Sq};\n',
+          'src/shapes/mod.rs': 'pub mod circle;\npub struct Square { pub side: f64 }\n',
+          'src/shapes/circle.rs': 'use super::Square;\n'
+                                  'use crate::util::round;\n'
+                                  '\n'
+                                  'pub struct Circle {\n'
+                                  '    pub r: f64,\n'
+                                  '    pub bound: Square,\n'
+                                  '}\n',
+          'src/util.rs': 'pub fn round(x: f64) -> f64 { x }\n'},
+ 'swift': {'Package.swift': '// swift-tools-version:5.9\n',
+           'Sources/Kit/Model.swift': 'public struct Note {\n    let id: Int\n    var tags: [Tag]\n}\n',
+           'Sources/Kit/Tag.swift': 'public struct Tag { let name: String }\n',
+           'Sources/App/Main.swift': 'import Kit\nlet n: Note? = nil\n'},
+ 'scala': {'build.sbt': 'name := "x"\n',
+           'src/main/scala/a/core/Item.scala': 'package a.core\n'
+                                               '\n'
+                                               'case class Item(name: String, price: Price)\n'
+                                               'case class Price(v: Int)\n',
+           'src/main/scala/a/app/Main.scala': 'package a.app\n'
+                                              '\n'
+                                              'import a.core.{Item, Price}\n'
+                                              '\n'
+                                              'object Main { val i: Item = null }\n'}}
+
+
+def lite_model(tmp: str, lang: str, **kw) -> dict:
+    from archplan.liteexport import export as lite
+    root = Path(tmp) / lang
+    write(root, LITE[lang])
+    return lite(root, **kw)
+
+
+def refs_of(m: dict) -> dict:
+    return {f: [r["to"] for r in v["refs"]] for f, v in m["files"].items()}
+
+
+class LiteExportTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def model(self, lang):
+        from archplan import modelcheck
+        m = lite_model(self.tmp.name, lang)
+        res = modelcheck.check(m, Path(self.tmp.name) / lang)
+        self.assertTrue(res["ok"], res["errors"])
+        self.assertLessEqual(set(res["capabilities"]["found"]), set(res["capabilities"]["declared"]))
+        return m, refs_of(m)
+
+    def test_java(self):
+        m, refs = self.model("java")
+        web, core = "src/main/java/com/acme/shop/web/", "src/main/java/com/acme/shop/core/"
+        # the import and the wildcard import; not the comment, not the string
+        self.assertEqual(refs[web + "OrderController.java"], [core + "Order.java", core + "Payable.java"])
+        self.assertNotIn("src/test/java/com/acme/shop/core/OrderTest.java", m["files"])
+        self.assertEqual(set(m["components"]), {"com.acme.shop.core", "com.acme.shop.web"})
+        self.assertEqual(m["dependencies"], [{"from": "com.acme.shop.web", "to": "com.acme.shop.core", "weight": 1,
+                                             "evidence": [web + "OrderController.java:3"]}])
+        order = m["types"]["com.acme.shop.core.Order"]
+        self.assertEqual(order["implements"], ["com.acme.shop.core.Base", "com.acme.shop.core.Payable"])
+        self.assertEqual(order["fields"][:2], [{"name": "lines", "ref": "com.acme.shop.core.Line", "many": True},
+                                               {"name": "customer", "ref": "com.acme.shop.core.Customer"}])
+        self.assertEqual(m["types"]["com.acme.shop.core.Line"]["kind"], "record")
+        self.assertEqual([f["name"] for f in m["types"]["com.acme.shop.core.Line"]["fields"]], ["sku", "qty"])
+
+    def test_kotlin_scala_csharp(self):
+        m, refs = self.model("kotlin")
+        self.assertEqual(refs["src/main/kotlin/a/api/UserApi.kt"], ["src/main/kotlin/a/model/User.kt"])
+        self.assertEqual(m["types"]["a.model.User"]["fields"][1], {"name": "address", "ref": "a.model.Address"})
+        m, refs = self.model("scala")
+        self.assertEqual(refs["src/main/scala/a/app/Main.scala"], ["src/main/scala/a/core/Item.scala"])
+        m, refs = self.model("csharp")
+        self.assertEqual(refs["Shop.Web/Controllers/OrdersController.cs"], ["Shop.Domain/Order.cs"])
+        order = m["types"]["Shop.Domain.Order"]
+        self.assertEqual(order["implements"], ["Shop.Domain.Entity"])
+        self.assertEqual(order["fields"][1], {"name": "Lines", "ref": "Shop.Domain.OrderLine", "many": True})
+
+    def test_php_psr4(self):
+        m, refs = self.model("php")
+        self.assertEqual(refs["app/Http/Controllers/UserController.php"], ["app/Models/User.php", "app/Models/Team.php"])
+        self.assertEqual(m["types"]["App.Models.User"]["fields"], [{"name": "team", "ref": "App.Models.Team"}])
+
+    def test_ruby_zeitwerk_and_require(self):
+        m, refs = self.model("ruby")
+        self.assertEqual(refs["app/controllers/users_controller.rb"], ["lib/tools/clock.rb", "app/models/user.rb"])
+        self.assertEqual(refs["app/models/user.rb"], ["app/models/application_record.rb", "app/models/admin/role.rb"])
+
+    def test_rust_modules(self):
+        m, refs = self.model("rust")
+        self.assertEqual(refs["src/lib.rs"], ["src/shapes/mod.rs", "src/util.rs", "src/shapes/circle.rs"])
+        self.assertEqual(refs["src/shapes/circle.rs"], ["src/shapes/mod.rs", "src/util.rs"])
+        self.assertEqual(m["types"]["src/shapes.Circle"]["fields"][1], {"name": "bound", "ref": "src/shapes.Square"})
+
+    def test_swift_targets(self):
+        m, refs = self.model("swift")
+        self.assertEqual(refs["Sources/App/Main.swift"], ["Sources/Kit/Model.swift"])
+        self.assertNotIn("Package.swift", m["files"])
+
+    def test_subfolder_keeps_repository_paths(self):
+        from archplan.liteexport import export as lite
+        root = Path(self.tmp.name) / "repo"
+        write(root / "backend", LITE["php"])
+        m = lite(root / "backend", rel_to=root)
+        self.assertEqual(refs_of(m)["backend/app/Http/Controllers/UserController.php"],
+                         ["backend/app/Models/User.php", "backend/app/Models/Team.php"])
+
+
+class FrameworkProfileTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_builtins_load_and_validate(self):
+        from archplan import frameworks as F
+        ts, errors = F.load()
+        self.assertEqual(errors, [])
+        self.assertTrue({"django", "fastapi", "flask", "phoenix", "rails", "laravel", "spring", "aspnetcore",
+                         "go-standard", "go-hexagonal", "react", "nextjs", "angular", "vue", "nestjs",
+                         "express"} <= set(ts))
+
+    def test_priority_and_manifests(self):
+        from archplan import frameworks as F
+        write(self.root, {"package.json": '{"dependencies": {"next": "14", "react": "18"}}',
+                          "src/app/layout.tsx": "", "src/app/page.tsx": "", "src/components/Nav.tsx": ""})
+        files = ["src/app/layout.tsx", "src/app/page.tsx", "src/components/Nav.tsx"]
+        m = {"components": {}, "files": {f: {"refs": []} for f in files}}
+        got = [t["name"] for t, _, _ in F.matches(m, files, self.root)]
+        self.assertEqual(got[:2], ["nextjs", "react"])
+        self.assertEqual(F.matches(m, files, None), [])  # no manifest, no dependency: no match
+
+    def test_project_override_and_untrusted_files(self):
+        from archplan import frameworks as F
+        pd = self.root / ".archplan"
+        mine = {"name": "react", "title": "Our React", "detect": {"priority": 99, "deps": ["react"]},
+                "units": [{"kind": "App", "glob": "web"}], "roles": [{"id": "ui", "patterns": ["*.tsx"]}], "rules": []}
+        write(pd / "profiles", {"react.json": json.dumps(mine),
+                                "bad-color.json": json.dumps(dict(mine, name="bad", roles=[
+                                    {"id": "ui", "patterns": ["*.tsx"], "color": "red\" onload=x"}])),
+                                "bad-pattern.json": json.dumps(dict(mine, name="bad2", roles=[
+                                    {"id": "ui", "patterns": [{"x": 1}]}])),
+                                "bad-rule.json": json.dumps(dict(mine, name="bad3", rules=[
+                                    {"id": "r", "from": "ui", "to": "nope"}])),
+                                "huge.json": "{" + " " * (300 * 1024) + "}"})
+        ts, errors = F.load(pd)
+        self.assertEqual((ts["react"]["title"], ts["react"]["origin"]), ("Our React", "project"))
+        self.assertEqual(ts["vue"]["origin"], "built-in")
+        self.assertEqual(sorted(Path(f).name for f, _ in errors),
+                         ["bad-color.json", "bad-pattern.json", "bad-rule.json", "huge.json"])
+
+    def test_generic_wins_when_it_fits_much_better(self):
+        from archplan import architecture as A
+        m = synthetic_model()
+        m["files"]["lib/shop_web/router.ex"] = {"refs": []}
+        write(self.root, {"mix.exs": "defp deps, do: [{:phoenix, \"~> 1.7\"}]\n", "lib/shop_web/router.ex": ""})
+        self.assertEqual(A.infer(m, self.root)["source"], "inferred")
+        self.assertEqual(A.use(m, "phoenix", self.root)["source"], "phoenix")
+        with self.assertRaises(A.ArchitectureError):
+            A.use(m, "nope", self.root)
+
+    def test_vue_profile(self):
+        from archplan import architecture as A
+        write(self.root, {"package.json": '{"dependencies": {"vue": "3"}}'})
+        refs = {"src/utils/format.ts": ["src/components/Badge.vue"],  # a break
+                "src/views/Home.vue": ["src/components/Badge.vue", "src/composables/useCart.ts"],
+                "src/components/Badge.vue": ["src/utils/format.ts"],
+                "src/components/__tests__/Badge.test.ts": ["src/views/Home.vue"]}  # tests are left out
+        files = [*refs, "src/main.ts", "src/stores/cart.ts", "src/types/index.ts", "src/composables/useCart.ts"]
+        m = {"components": {}, "types": {}, "files": {f: {"refs": [{"to": t} for t in refs.get(f, [])]} for f in files}}
+        p = A.infer(m, self.root)
+        self.assertEqual(p["source"], "vue")
+        a = A.analyse(p, m)
+        roles = {f["path"]: f["role"] for u in a["units"] for f in u["files"]}
+        self.assertEqual(roles, {"src/utils/format.ts": "utils", "src/views/Home.vue": "views",
+                                 "src/components/Badge.vue": "components", "src/main.ts": "entry",
+                                 "src/stores/cart.ts": "stores", "src/types/index.ts": "types",
+                                 "src/composables/useCart.ts": "composables"})
+        self.assertEqual({r["id"]: r["count"] for r in a["rules"]},
+                         {"utils-services-no-ui": 1, "stores-no-ui": 0, "types-stay-low": 0, "components-not-views": 0})
+
+
+class ExporterRegistryTest(TempProject):
+    def entry(self, name, prio, **kw):
+        e = {"name": name, "languages": ["java"], "priority": prio, "detect": {"files": ["pom.xml"]},
+             "command": f"{name}-export -o {{out}}", "capabilities": ["components"]}
+        e.update(kw)
+        return json.dumps(e)
+
+    def test_lite_for_jvm_and_project_entries(self):
+        from archplan import exporters
+        root = Path(self.tmp.name) / "jvm"
+        write(root, LITE["java"])
+        res = exporters.survey(root, root / ".archplan")
+        self.assertEqual((res["pick"], res["command"], res["trusted_source"]),
+                         ("lite", "archplan export-lite . -o .archplan/model.archmodel.json", True))
+        write(root / ".archplan" / "exporters", {
+            "missing.json": self.entry("missing", 90, check={"programs": ["archplan-no-such-program"]}),
+            "runs.json": self.entry("runs", 80, check="touch pwned"),
+            "bad.json": self.entry("bad", 70, command="no output placeholder")})
+        res = exporters.survey(root, root / ".archplan")
+        rows = {r["name"]: r for r in res["exporters"]}
+        self.assertEqual((rows["missing"]["installed"], rows["runs"]["installed"]), (False, None))
+        self.assertFalse((root / "pwned").exists())  # a project entry's check command never runs
+        self.assertEqual((res["pick"], res["trusted_source"]), ("runs", False))
+        self.assertEqual([Path(e["file"]).name for e in res["errors"]], ["bad.json"])
+        # init does not approve a command that came from the repository
+        p = project.init(root)
+        self.assertEqual(p.export_command(), "runs-export -o .archplan/model.archmodel.json")
+        self.assertFalse(p.trusted())
+
+    def test_builtin_init_is_trusted(self):
+        p = project.init(self.root)
+        self.assertEqual(p.export_command(), "archplan export-python -o .archplan/model.archmodel.json")
+        self.assertTrue(p.trusted())
+
+    def test_export_check(self):
+        from archplan import modelcheck
+        m = export(self.root)
+        res = modelcheck.check(m, self.root)
+        self.assertTrue(res["ok"], res["errors"])
+        self.assertLessEqual(set(res["capabilities"]["found"]), set(res["capabilities"]["declared"]))
+        bad = json.loads(json.dumps(m))
+        bad["dependencies"].append({"from": "shop", "to": "nowhere", "weight": 1, "evidence": ["../etc/passwd:1"]})
+        bad["files"]["/abs/x.py"] = {"refs": []}
+        bad["source"]["capabilities"].append("magic")
+        res = modelcheck.check(bad)
+        self.assertFalse(res["ok"])
+        text = "\n".join(res["errors"])
+        for want in ("unknown component 'nowhere'", "'../etc/passwd' is leaves the root", "'/abs/x.py' is absolute",
+                     "unknown capabilities: magic"):
+            self.assertIn(want, text)
+        f = Path(self.tmp.name) / "bad.json"
+        f.write_text(json.dumps(bad))
+        out = subprocess.run([sys.executable, "-m", "archplan", "export-check", str(f)], capture_output=True,
+                             env={**os.environ, "PYTHONPATH": str(ROOT / "src")})
+        self.assertEqual(out.returncode, 1)
+
+    def test_findings_without_calls_or_methods(self):
+        from archplan.findings import Findings
+        from archplan.liteexport import export as lite
+        root = Path(self.tmp.name) / "jvm"
+        write(root, LITE["java"])
+        p = project.init(root, export="true")
+        p.model_path.write_text(json.dumps(lite(root)))
+        res = Findings(p).listing()
+        self.assertIsInstance(res["findings"], list)
+
+
+# ---------- detectors ----------
+
+def rich_model():
+    """findings_model plus a tangle (F, G, H, I), a forbidden dependency (J -> A)
+    and a leaked term (B uses A's payout), for the ported detectors."""
+    m = findings_model()
+    for a, b, w in [("F", "G", 2), ("G", "H", 1), ("H", "I", 3), ("I", "F", 1), ("G", "F", 2), ("J", "A", 1)]:
+        m["dependencies"].append({"from": a, "to": b, "weight": w, "evidence": [f"lib/{a.lower()}/y.ex:{w}"]})
+    m["policy"] = {"default": "allow", "rules": [{"from": "J", "to": "A", "effect": "deny"}]}
+    m["vocabulary"] = {"concepts": {"payout": {"name": "Payout", "owner": "A", "terms": ["payout"]}},
+                       "components": {"B": {"avoid": ["payout"]}},
+                       "usage": [{"component": "B", "concept": "payout", "idents": 2, "evidence": ["lib/b/x.ex:1"]}]}
+    return m
+
+
+PORTED_IDS = [
+    ('history.coupling', 'history.coupling-e1753921f02a'),
+    ('layers.policy', 'layers.policy-4d84c8f032f0'),
+    ('structure.cycle', 'structure.cycle-02505cd3c1c0'),
+    ('structure.cycle', 'structure.cycle-ab1a5fabc25f'),
+    ('structure.tangle', 'structure.tangle-dd508edff90b'),
+    ('types.fields', 'types.fields-f313818d434b'),
+    ('types.synonyms', 'types.synonyms-a8a6462a07ae'),
+    ('vocabulary.leak', 'vocabulary.leak-a01d5aac216d'),
+]  # from findings.py before the detectors; baselines depend on them
+
+
+def concept_model():
+    """Small fixtures for the concept, boundary and evolution detectors."""
+    comps = {c: {"name": c, "path": f"lib/{c}", "match": [f"lib/{c}/**"]} for c in ("orders", "billing", "shipping", "core")}
+    f = lambda n, t="string", **kw: {"name": n, "type": t, **kw}
+    types = {
+        "orders.Order": {"name": "Order", "component": "orders", "kind": "struct", "file": "lib/orders/order.ex",
+                         "fields": [f("is_paid", "boolean"), f("is_shipped", "boolean"), f("cancelled", "boolean"),
+                                    f("cancelled_at", "utc_datetime"), f("invoice_id", "integer"),
+                                    f("street"), f("city"), f("zip_code"), f("timeout_ms", "integer"),
+                                    f("amount", "integer"), f("meta", "map")]},
+        "billing.Invoice": {"name": "Invoice", "component": "billing", "kind": "struct", "file": "lib/billing/invoice.ex",
+                            "fields": [f("street"), f("city"), f("zip_code"), f("total"), f("amount_cents", "integer"),
+                                       f("order", None, ref="orders.Order")]},
+        "shipping.Parcel": {"name": "Parcel", "component": "shipping", "kind": "struct", "file": "lib/shipping/parcel.ex",
+                            "fields": [f("street"), f("city"), f("zip_code"), f("weight"), f("label"),
+                                       f("timeout_seconds", "integer")], "uses": ["orders.Order"]},
+        "core.Repo": {"name": "Repo", "component": "core", "kind": "module", "file": "lib/core/repo.ex"},
+        "core.Cache": {"name": "Cache", "component": "core", "kind": "module", "file": "lib/core/cache.ex"},
+        "core.Clock": {"name": "Clock", "component": "core", "kind": "module", "file": "lib/core/clock.ex"},
+        "core.Util": {"name": "Util", "component": "core", "kind": "module", "file": "lib/core/util.ex"},
+    }
+    deps = [("orders", "core"), ("billing", "core"), ("shipping", "core"), ("billing", "orders"),
+            ("shipping", "orders")]
+    files = {"lib/billing/invoice.ex": {"component": "billing", "refs": [{"to": "lib/core/repo.ex"},
+                                                                          {"to": "lib/orders/order.ex"}]},
+             "lib/shipping/parcel.ex": {"component": "shipping", "refs": [{"to": "lib/core/repo.ex"},
+                                                                          {"to": "lib/orders/order.ex"}]},
+             "lib/orders/order.ex": {"component": "orders", "refs": [{"to": "lib/core/repo.ex"}]},
+             "lib/core/repo.ex": {"component": "core", "refs": [{"to": "lib/core/cache.ex"}, {"to": "lib/core/clock.ex"},
+                                                                 {"to": "lib/core/util.ex"}]},
+             "lib/core/cache.ex": {"component": "core", "refs": []}, "lib/core/clock.ex": {"component": "core", "refs": []},
+             "lib/core/util.ex": {"component": "core", "refs": []}}
+    sig = lambda i, c, *ps: {"id": i, "component": c, "file": f"lib/{c}/x.ex", "line": 1,
+                             "params": [{"name": n, "type": t} for n, t in ps], "returns": "ok"}
+    signatures = [sig("orders.place/3", "orders", ("order", "Order"), ("notify", "boolean"), ("force", "boolean")),
+                  sig("orders.cancel/2", "orders", ("order", "Order"), ("refund", "bool"))]
+    lit = lambda v, c, ctx, field=None: {"value": v, "component": c, "file": f"lib/{c}/x.ex", "line": 3, "context": ctx,
+                                         **({"field": field} if field else {})}
+    literals = [lit("draft", "orders", "assign", "status"), lit("paid", "orders", "compare", "status"),
+                lit("paid", "billing", "compare", "status"), lit("shipped", "shipping", "case", "status"),
+                lit("admin", "orders", "compare"), lit("admin", "billing", "compare"), lit("admin", "shipping", "case"),
+                lit("x y z", "orders", "compare", "status")]
+    return {"format": "archmodel/1", "components": comps, "types": types, "files": files,
+            "dependencies": [{"from": a, "to": b, "weight": 1, "evidence": []} for a, b in deps],
+            "signatures": signatures, "literals": literals}
+
+
+class DetectorsTest(TempProject):
+    def setUp(self):
+        super().setUp()
+        self.p = project.init(self.root)
+        self.p.model_path.write_text(json.dumps(rich_model()))
+        self.p.path("hotspots.json").write_text(json.dumps({"key": {}, "result": {
+            "head": "abc", "since_days": 365, "pairs": [{"a": "B", "b": "J", "together": 9, "degree": 0.9}]}}))
+
+    def run_detectors(self, **kw):
+        from archplan import detectors
+        return detectors.run(self.p, **kw)
+
+    def test_ported_ids_unchanged(self):
+        res = self.run_detectors()
+        ported = sorted((f["kind"], f["id"]) for f in res["findings"] if f["kind"] in {k for k, _ in PORTED_IDS})
+        self.assertEqual(ported, PORTED_IDS)
+        counts = {d["id"]: d["count"] for d in res["detectors"]}
+        for kind in {k for k, _ in PORTED_IDS}:
+            self.assertEqual(counts[kind], sum(1 for k, _ in PORTED_IDS if k == kind))
+        # findings.analyse gives the same as before for the brief and the editor
+        from archplan.findings import analyse
+        self.assertEqual(sorted(f["id"] for f in analyse(self.p)[0]), sorted(f["id"] for f in res["findings"]))
+
+    def test_missing_needs(self):
+        res = self.run_detectors()
+        why = {m["kind"]: m["reason"] for m in res["missing"]}
+        self.assertIn("signatures", why["concepts.bool_params"])
+        self.assertIn("literals", why["concepts.string_enum"])
+        self.assertIn("hotspots --refresh", why["evolution.ownership"])
+        row = next(d for d in res["detectors"] if d["id"] == "concepts.bool_params")
+        self.assertEqual(row["missing"], ["signatures"])
+
+    def test_enable_disable(self):
+        from archplan import detectors
+        from archplan.findings import Findings
+        F = Findings(self.p)
+        self.assertTrue(any(f["kind"] == "types.fields" for f in F.listing()["findings"]))
+        with redirect_stdout(io.StringIO()):
+            cli.main(["detectors", "disable", "types.fields", "--dir", str(self.root)])
+        cfg = json.loads(self.p.path("config.json").read_text())
+        self.assertEqual(cfg["detectors"]["types.fields"], {"enabled": False})
+        self.assertFalse(any(f["kind"] == "types.fields" for f in F.listing()["findings"]))  # cache key follows config
+        row = next(d for d in self.run_detectors()["detectors"] if d["id"] == "types.fields")
+        self.assertEqual((row["enabled"], row["count"]), (False, 0))
+        detectors.configure(self.p, "types.fields", enabled=True, params={"large_type": 5, "cluster_size": 2})
+        self.assertEqual(json.loads(self.p.path("config.json").read_text())["detectors"]["types.fields"],
+                         {"enabled": True, "params": {"large_type": 5, "cluster_size": 2}})
+        titles = [f["title"] for f in F.listing()["findings"] if f["kind"] == "types.fields"]
+        self.assertIn("B.Member has 7 fields.", titles)
+        with self.assertRaises(detectors.DetectorError):
+            detectors.configure(self.p, "types.fields", params={"large_type": "many"})
+        with self.assertRaises(detectors.DetectorError):
+            detectors.configure(self.p, "types.fields", params={"nope": 1})
+        with self.assertRaises(KeyError):
+            detectors.configure(self.p, "no.such")
+        # a hand-edited config with bad values falls back to the defaults
+        cfg = json.loads(self.p.path("config.json").read_text())
+        cfg["detectors"]["types.fields"] = {"enabled": "no", "params": {"large_type": [1]}}
+        self.p.path("config.json").write_text(json.dumps(cfg))
+        row = next(d for d in self.run_detectors()["detectors"] if d["id"] == "types.fields")
+        self.assertEqual((row["enabled"], row["params"]["large_type"]), (True, 25))
+
+    def test_detectors_cli_and_api(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli.main(["detectors", "--dir", str(self.root)])
+        out = buf.getvalue()
+        self.assertRegex(out, r"structure\.tangle\s+structure\s+yes\s+1\s+deps")
+        self.assertIn("concepts.bool_params", out)
+        buf = io.StringIO()
+        with redirect_stdout(buf), unittest.mock.patch("sys.stderr", io.StringIO()):
+            cli.main(["detectors", "run", "structure.cycle", "--json", "--dir", str(self.root)])
+        res = json.loads(buf.getvalue())
+        self.assertEqual([d["id"] for d in res["detectors"]], ["structure.cycle"])
+        self.assertEqual(len(res["findings"]), 2)
+        srv, url = serve_in_thread(self.p)
+        try:
+            st, d = call(url, "/api/detectors")
+            self.assertEqual(st, 200)
+            key = d["key"]
+            self.assertEqual(next(x for x in d["detectors"] if x["id"] == "layers.policy")["count"], 1)
+            st, d = call(url, "/api/detectors/layers.policy", "PUT", {"enabled": False})
+            self.assertEqual((st, d["config"]), (200, {"enabled": False}))
+            self.assertNotEqual(d["key"], key)
+            st, d = call(url, "/api/findings")
+            self.assertFalse(any(f["kind"] == "layers.policy" for f in d["findings"]))
+            self.assertEqual(call(url, "/api/detectors/layers.policy", "PUT", {"params": {"x": 1}})[0], 400)
+            self.assertEqual(call(url, "/api/detectors/no.such", "PUT", {"enabled": True})[0], 404)
+            st, d = call(url, "/api/metrics")
+            self.assertEqual(st, 200)
+            self.assertIn("A", d["metrics"])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_external_detector(self):
+        from archplan.detectors import external
+        script = Path(self.tmp.name) / "det.py"
+        script.write_text(textwrap.dedent("""\
+            import json, sys
+            ctx = json.load(open(sys.argv[1]))
+            assert ctx["model"]["format"] == "archmodel/1" and ctx["params"] == {"limit": 3}
+            fs = [{"key": "a", "title": "T" * 999, "components": ["A", "nowhere"], "strength": "huge",
+                   "files": ["lib/a/user.ex:3", "../../etc/passwd", "/etc/passwd", 7], "evidence": {"n": 1}},
+                  {"key": ["b", 2], "title": "second", "evidence": {"x": "y" * 20000}}, "junk", {"title": ""}]
+            fs += [{"key": str(i), "title": f"more {i}"} for i in range(500)]
+            print(json.dumps({"findings": fs}))
+            """))
+        d = self.p.path("detectors")
+        d.mkdir()
+        (d / "ext.json").write_text(json.dumps({
+            "id": "concepts.ext_check", "name": "Ext", "group": "concepts", "needs": ["fields"],
+            "command": f"{sys.executable} {script} {{ctx}}", "params": {"limit": 3}, "timeout": 30}))
+        (d / "clash.json").write_text(json.dumps({"id": "types.fields", "group": "types", "command": "true {ctx}"}))
+        (d / "bad.json").write_text(json.dumps({"id": "Bad Id", "group": "types", "command": "true {ctx}"}))
+        res = self.run_detectors(execute=True)
+        why = {m["kind"]: m["reason"] for m in res["missing"]}
+        self.assertIn("not approved", why["concepts.ext_check"])
+        self.assertEqual(sum(1 for m in res["missing"] if m["kind"] == "detector"), 2)  # clash and bad id
+        self.assertFalse(any(f["kind"] == "concepts.ext_check" for f in res["findings"]))
+        spec = external.load(self.p.dir)[0]["concepts.ext_check"]
+        external.trust(self.p.root, spec)
+        res = self.run_detectors(execute=True)
+        fs = [f for f in res["findings"] if f["kind"] == "concepts.ext_check"]
+        self.assertEqual(len(fs), external.MAX_FINDINGS - 2)  # the junk entry and the empty title are dropped
+        self.assertTrue(all(f["id"].startswith("concepts.ext_check-") and f["group"] == "concepts" for f in fs))
+        first = next(f for f in fs if f["title"].startswith("TTT"))
+        self.assertEqual((len(first["title"]), first["components"], first["files"], first["strength"]),
+                         (external.TITLE_MAX, ["A"], ["lib/a/user.ex"], "weak"))
+        self.assertEqual(next(f for f in fs if f["title"] == "second")["evidence"], {"truncated": True})
+        # the editor shows the cached result without running the command
+        ids = sorted(f["id"] for f in fs)
+        res = self.run_detectors()
+        self.assertEqual(sorted(f["id"] for f in res["findings"] if f["kind"] == "concepts.ext_check"), ids)
+        self.assertIn(external.CACHE, self.p.path(".gitignore").read_text())
+        # a changed command is not approved any more
+        (d / "ext.json").write_text(json.dumps({**json.loads((d / "ext.json").read_text()),
+                                                "command": f"{sys.executable} {script} {{ctx}} --x"}))
+        why = {m["kind"]: m["reason"] for m in self.run_detectors(execute=True)["missing"]}
+        self.assertIn("not approved", why["concepts.ext_check"])
+        # a slow command times out
+        (d / "ext.json").write_text(json.dumps({"id": "concepts.ext_check", "group": "concepts",
+                                                "command": f"{sys.executable} -c 'import time; time.sleep(5)' {{ctx}}",
+                                                "timeout": 0.5}))
+        external.trust(self.p.root, external.load(self.p.dir)[0]["concepts.ext_check"])
+        why = {m["kind"]: m["reason"] for m in self.run_detectors(execute=True)["missing"]}
+        self.assertIn("timed out", why["concepts.ext_check"])
+
+
+class NewDetectorsTest(TempProject):
+    def setUp(self):
+        super().setUp()
+        self.p = project.init(self.root)
+        self.p.model_path.write_text(json.dumps(concept_model()))
+
+    def found(self, did):
+        from archplan import detectors
+        res = detectors.run(self.p, only={did})
+        self.assertEqual(res["missing"], [])
+        return res["findings"]
+
+    def test_state_flags(self):
+        (f,) = self.found("concepts.state_flags")
+        self.assertEqual(f["evidence"]["types"][0]["flags"], ["is_paid", "is_shipped", "cancelled"])
+        self.assertEqual(f["evidence"]["types"][0]["timestamps"], ["cancelled_at"])
+        self.assertIn("Order in orders keeps its state in 3 boolean flags", f["title"])
+
+    def test_data_clump(self):
+        (f,) = self.found("concepts.data_clump")
+        self.assertEqual(f["evidence"]["fields"], ["city", "street", "zip_code"])
+        self.assertEqual(f["components"], ["billing", "orders", "shipping"])
+
+    def test_raw_ids(self):
+        (f,) = self.found("concepts.raw_ids")
+        self.assertEqual((f["evidence"]["component"], f["evidence"]["owner"]), ("orders", "billing"))
+        self.assertIn("InvoiceId", f["evidence"]["moves"][0])
+
+    def test_untyped_bag(self):
+        (f,) = self.found("concepts.untyped_bag")  # Order is used by billing and shipping; Order.meta is a map
+        self.assertEqual(f["components"], ["orders", "billing", "shipping"])
+        self.assertEqual(f["evidence"]["fields"][0]["field"], "meta")
+        from archplan.detectors.fields import is_bag
+        for t, want in [("map", True), ("map() | nil", True), ("{:array, map}", True), ("Dict[str, Any]", True),
+                        ("JSONField", True), ("map[string]interface{}", True), ("Record<string, unknown>", True),
+                        ("map[string]string", False), ("Map<String, Order>", False), ("string", False)]:
+            self.assertEqual(is_bag({"type": t}), want, t)
+
+    def test_units_in_names(self):
+        fs = {f["evidence"]["base"]: f for f in self.found("concepts.units_in_names")}
+        self.assertEqual(set(fs), {"amount", "timeout"})
+        self.assertEqual(fs["timeout"]["evidence"]["units"], {"ms": ["orders"], "s": ["shipping"]})
+        self.assertEqual(fs["amount"]["strength"], "weak")
+
+    def test_stability(self):
+        from archplan import detectors
+        fs = detectors.run(self.p, only={"boundaries.stability"})
+        self.assertEqual([], fs["findings"])  # core has 3 dependents, fewer than pain_dependents
+        detectors.configure(self.p, "boundaries.stability", params={"pain_dependents": 3})
+        res = detectors.run(self.p, only={"boundaries.stability"})
+        (f,) = res["findings"]
+        self.assertEqual((f["evidence"]["component"], f["evidence"]["zone"]), ("core", "pain"))
+        m = res["extras"]["metrics"]["core"]
+        self.assertEqual((m["ca"], m["ce"], m["i"], m["a"], m["d"]), (3, 0, 0.0, 0.0, 1.0))
+
+    def test_unused_public(self):
+        (f,) = self.found("boundaries.unused_public")
+        self.assertEqual(f["components"], ["core"])
+        self.assertEqual(f["files"], ["lib/core/cache.ex", "lib/core/clock.ex", "lib/core/util.ex"])
+
+    def test_ownership(self):
+        res = {"since_days": 365, "head": "abc", "pairs": [],
+               "owners": {"core": {f"dev{i}@x": 3 for i in range(8)},
+                          **{c: {"solo@x": 30, "dev0@x": 2} for c in ("orders", "billing", "shipping")}}}
+        self.p.path("hotspots.json").write_text(json.dumps({"key": {}, "result": res}))
+        from archplan import detectors
+        detectors.configure(self.p, "evolution.ownership", params={"spread_components": 3})
+        fs = {tuple(f["components"]): f for f in self.found("evolution.ownership")}
+        self.assertIn("core has 8 active authors and no clear owner", fs[("core",)]["title"])
+        spread = next(f for f in fs.values() if f["evidence"].get("authors") and isinstance(f["evidence"]["authors"], list))
+        self.assertEqual([a["author"] for a in spread["evidence"]["authors"]], ["dev0@x", "solo@x"])
+
+    def test_string_enum(self):
+        fs = {f["evidence"]["kind"]: f for f in self.found("concepts.string_enum")}
+        self.assertEqual(fs["field"]["evidence"]["values"], {"paid": 2, "draft": 1, "shipped": 1})
+        self.assertIn("Status enum", fs["field"]["evidence"]["moves"][0])
+        self.assertEqual(fs["value"]["title"], "The string 'admin' is compared in 3 components (orders, billing, shipping).")
+
+    def test_bool_params(self):
+        (f,) = self.found("concepts.bool_params")
+        self.assertEqual(f["evidence"]["functions"][0], {"id": "orders.place/3", "flags": ["notify", "force"],
+                                                         "file": "lib/orders/x.ex", "line": 1})
+        self.assertEqual(f["strength"], "medium")
+
+    def test_hotspots_cache_owners(self):
+        commits = [("1", "a@x", "2026-01-02", ["lib/core/repo.ex", "lib/orders/order.ex"]),
+                   ("2", "b@x", "2026-01-01", ["lib/core/repo.ex"])]
+        res = hotspots.analyse(commits, concept_model())
+        self.assertEqual(res["owners"], {"core": {"a@x": 1, "b@x": 1}, "orders": {"a@x": 1}})
+
+
+class RepoCodeTrustTest(TempProject):
+    """Exporters that run repository code are never approved by init, and an
+    approval lapses when a file the command names changes."""
+
+    def init_out(self, root):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli.main(["init", str(root)])
+        return buf.getvalue()
+
+    def test_init_does_not_trust_ts_elixir_go(self):
+        from archplan import exporters
+        cases = {
+            "typescript": ({"package.json": '{"name": "x"}', "tsconfig.json": "{}", "src/a.ts": "export const a = 1\n",
+                            "node_modules/typescript/package.json": "{}"}, "export-ts"),
+            "elixir": ({"mix.exs": "defmodule X.MixProject do\nend\n", "lib/x.ex": "defmodule X do\nend\n"},
+                       "export-elixir"),
+            "go": ({"go.mod": "module example.com/x\n", "main.go": "package main\n"}, "go run"),
+        }
+        for name, (files, want) in cases.items():
+            with self.subTest(name):
+                root = Path(self.tmp.name) / name
+                write(root, files)
+                res = exporters.survey(root, root / ".archplan")
+                self.assertEqual(res["pick"], name)
+                self.assertTrue(res["runs_repo_code"])
+                out = self.init_out(root)
+                p = project.Project(root)
+                self.assertIn(want, p.export_command())
+                self.assertFalse(p.trusted())
+                self.assertIn("archplan trust", out)
+                self.assertIn("runs code from this repository", out)
+                with self.assertRaises(project.UntrustedExport):
+                    p.export(require_trust=True)
+                with self.assertRaises(project.UntrustedExport):
+                    Agent(p).refresh_model()
+                p.trust()  # what `archplan trust` does after the person said yes
+                self.assertTrue(p.trusted())
+        # the registry marks exactly these three
+        es, _ = exporters.load()
+        self.assertEqual(sorted(n for n, e in es.items() if e.get("runs_repo_code")), ["elixir", "go", "typescript"])
+
+    def test_python_and_lite_stay_auto_approved(self):
+        out = self.init_out(self.root)
+        self.assertTrue(project.Project(self.root).trusted())
+        self.assertNotIn("not approved", out)
+        root = Path(self.tmp.name) / "jvm"
+        write(root, LITE["java"])
+        project.init(root)
+        self.assertTrue(project.Project(root).trusted())
+
+    def test_runs_repo_code_must_be_boolean(self):
+        from archplan import exporters
+        e = {"name": "x", "detect": {"files": ["a"]}, "command": "x -o {out}", "runs_repo_code": "yes"}
+        with self.assertRaises(exporters.ExporterError):
+            exporters.check_entry(e)
+
+    def test_changed_script_revokes_export_approval(self):
+        write(self.root, {"tools/exp.py": "print('v1')\n"})
+        p = project.init(self.root, export="python3 tools/exp.py -o .archplan/model.archmodel.json", force=True)
+        self.assertTrue(p.trusted())
+        record = project.load_trust()["files"]
+        self.assertEqual([list(v) for v in record.values()], [["tools/exp.py"]])
+        # the output after -o does not count
+        p.model_path.write_text("{}")
+        self.assertTrue(p.trusted())
+        (self.root / "tools/exp.py").write_text("import os; os.system('touch owned')\n")  # a git pull
+        self.assertEqual(p.trust_state(), (False, ["tools/exp.py"]))
+        with self.assertRaises(project.UntrustedExport) as cm:
+            p.export(require_trust=True)
+        self.assertIn("tools/exp.py", str(cm.exception))
+        self.assertFalse((self.root / "owned").exists())
+        r = subprocess.run([str(ROOT / "bin" / "archplan"), "trust"], cwd=self.root, capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL, timeout=30)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("tools/exp.py", r.stderr)
+        self.assertIn("changed", r.stderr)
+        p.trust()
+        self.assertTrue(p.trusted())
+
+    def test_old_record_without_hashes_needs_new_approval(self):
+        write(self.root, {"tools/exp.py": "print('v1')\n"})
+        p = project.init(self.root, export="python3 tools/exp.py -o out.json", force=True)
+        data = project.load_trust()
+        del data["files"]
+        project.write_json(project.trust_path(), data)
+        self.assertEqual(p.trust_state(), (False, ["tools/exp.py"]))
+
+    def test_argument_outside_repo_or_symlinked_is_not_hashed_outside(self):
+        outside = Path(self.tmp.name) / "outside.py"
+        outside.write_text("x")
+        os.symlink(outside, self.root / "link.py")
+        self.assertEqual(project.arg_files(self.root, f"python3 {outside} link.py --x=../outside.py"), {})
+
+    def test_changed_script_revokes_detector_approval(self):
+        from archplan.detectors import external
+        write(self.root, {"tools/check.py": "print('{\"findings\": []}')\n"})
+        p = project.init(self.root)
+        d = p.path("detectors")
+        d.mkdir()
+        (d / "x.json").write_text(json.dumps({"id": "concepts.x", "group": "concepts",
+                                              "command": "python3 tools/check.py {ctx}"}))
+        p.export()
+        spec = external.load(p.dir)[0]["concepts.x"]
+        self.assertFalse(external.trusted(p.root, spec))
+        external.trust(p.root, spec)
+        self.assertTrue(external.trusted(p.root, spec))
+        (self.root / "tools/check.py").write_text("import os; os.system('touch owned')\n")
+        self.assertEqual(external.trust_state(p.root, spec), (False, ["tools/check.py"]))
+        from archplan import detectors
+        res = detectors.run(p, only={"concepts.x"}, execute=True, include_disabled=True)
+        why = {m["kind"]: m["reason"] for m in res["missing"]}
+        self.assertIn("tools/check.py", why["concepts.x"])
+        self.assertFalse((self.root / "owned").exists())
+
+
+@unittest.skipUnless(hasattr(os, "mkfifo"), "needs FIFOs")
+class HostileFilesTest(TempProject):
+    """Repository files are read only when they are regular files inside the
+    repository and not too large; walks do not follow symlinked folders."""
+
+    def setUp(self):
+        super().setUp()
+        self.outside = Path(self.tmp.name) / "secret"
+        self.outside.mkdir()
+        (self.outside / "Secret.java").write_text("package x;\npublic class Secret {}\n")
+
+    def plant(self, root: Path, name: str):
+        """name as a symlink to /dev/zero, a symlink out of the repo, and a FIFO."""
+        stem, ext = os.path.splitext(name)
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        os.symlink("/dev/zero", root / f"{stem}Zero{ext}")
+        os.symlink(self.outside / "Secret.java", root / f"{stem}Out{ext}")
+        os.mkfifo(root / f"{stem}Fifo{ext}")
+
+    def timed(self, fn, limit=10.0):
+        import time
+        t = time.monotonic()
+        r = fn()
+        self.assertLess(time.monotonic() - t, limit)
+        return r
+
+    def test_safeio(self):
+        from archplan import safeio
+        self.plant(self.root, "x/a.txt")
+        (self.root / "x/ok.txt").write_text("ok")
+        (self.root / "x/big.txt").write_bytes(b"a" * 100)
+        self.assertEqual(safeio.read_text(self.root, "x/ok.txt"), "ok")
+        for rel in ("x/aZero.txt", "x/aOut.txt", "x/aFifo.txt", "../secret/Secret.java", "/etc/passwd"):
+            with self.subTest(rel), self.assertRaises(OSError):
+                self.timed(lambda: safeio.read_text(self.root, rel), 2)
+        with self.assertRaises(safeio.Unsafe):
+            safeio.read_text(self.root, "x/big.txt", limit=10)
+        self.assertEqual(safeio.read_text(self.root, "x/big.txt", limit=10, truncate=True), "a" * 10)
+        os.symlink(self.outside, self.root / "x" / "linked")
+        walked = [d for d, _, _ in safeio.walk(self.root)]
+        self.assertFalse(any("linked" in d for d in walked))
+
+    def test_lite_export_skips_planted_files(self):
+        from archplan import liteexport
+        root = Path(self.tmp.name) / "jvm"
+        write(root, LITE["java"])
+        self.plant(root, "src/main/java/com/acme/A.java")
+        os.symlink(self.outside, root / "src" / "main" / "java" / "linked")
+        m = self.timed(lambda: liteexport.export(root))
+        self.assertTrue(m["types"])
+        self.assertFalse([t for t in m["types"] if "Secret" in t])
+        self.assertFalse([f for f in m["files"] if "Zero" in f or "Fifo" in f or "Out" in f or "linked" in f])
+
+    def test_python_export_skips_planted_files(self):
+        self.plant(self.root, "src/shop/a.py")
+        os.symlink(self.outside, self.root / "src" / "shop" / "linked")
+        m = self.timed(lambda: export(self.root))
+        self.assertFalse([f for f in m.get("files") or {} if "Zero" in f or "Fifo" in f or "linked" in f])
+
+    def test_model_paths_and_manifests(self):
+        from archplan import frameworks
+        from archplan.detectors import Context
+        from archplan.schema import access
+        self.plant(self.root, "lib/a.ex")
+        os.symlink("/dev/zero", self.root / "package.json")
+        self.assertEqual(self.timed(lambda: frameworks.read_deps(self.root / "package.json"), 2), set())
+        rd = access.Reader(self.root)
+        for rel in ("lib/aZero.ex", "lib/aOut.ex", "lib/aFifo.ex", "../secret/Secret.java"):
+            self.assertEqual(self.timed(lambda: rd.text(rel), 2), "")
+        p = project.init(self.root)
+        ctx = Context(p, model={"components": {}, "files": {}}, target={})
+        for rel in ("lib/aZero.ex", "lib/aFifo.ex", "../secret/Secret.java"):
+            self.assertIsNone(self.timed(lambda: ctx.read(rel), 2))
+
+    def test_archplan_dir_planted_files(self):
+        p = project.init(self.root)
+        (p.dir / "threads.json").unlink(missing_ok=True)
+        os.mkfifo(p.dir / "threads.json")
+        os.symlink("/dev/zero", p.dir / "plan.md")
+        with self.assertRaises(OSError):
+            self.timed(lambda: project.read_json(p.dir / "threads.json"), 2)
+        with self.assertRaises(OSError):
+            self.timed(lambda: Agent(p).get_plan(), 2)
+        # a planted temporary file cannot redirect a write out of the repository
+        target = self.outside / "victim"
+        target.write_text("keep")
+        os.symlink(target, p.dir / "state.json.tmp")
+        p.set_state(x=1)
+        self.assertEqual(target.read_text(), "keep")
 
 
 if __name__ == "__main__":

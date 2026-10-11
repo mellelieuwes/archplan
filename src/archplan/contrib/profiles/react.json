@@ -1,0 +1,265 @@
+{
+  "name": "react",
+  "title": "React app",
+  "language": "typescript",
+  "description": "React (Vite, CRA and similar): src/ as one unit, plus src/features/* when it exists. Pages compose components; hooks, stores and services hold the logic; utilities and types depend on nothing above them. Tests are left out.",
+  "detect": {
+    "priority": 30,
+    "deps": [
+      "react"
+    ],
+    "files": [
+      "**/src/**"
+    ]
+  },
+  "units": [
+    {
+      "kind": "App",
+      "glob": "**/src",
+      "require": [
+        "components/",
+        "pages/",
+        "routes/",
+        "views/",
+        "App.tsx",
+        "App.jsx",
+        "main.tsx",
+        "index.tsx"
+      ],
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    {
+      "kind": "Feature",
+      "glob": "**/src/features/*",
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    {
+      "kind": "Feature",
+      "glob": "**/src/modules/*",
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "pages",
+      "patterns": [
+        "**/pages/**",
+        "**/routes/**",
+        "**/views/**",
+        "**/screens/**",
+        "App.tsx",
+        "App.jsx"
+      ],
+      "name": "Pages"
+    },
+    {
+      "id": "components",
+      "patterns": [
+        "*.tsx",
+        "*.jsx",
+        "**/components/**"
+      ],
+      "name": "Components"
+    },
+    {
+      "id": "hooks",
+      "patterns": [
+        "**/hooks/**",
+        "use[A-Z]*.ts",
+        "use[A-Z]*.js"
+      ],
+      "name": "Hooks"
+    },
+    {
+      "id": "stores",
+      "patterns": [
+        "**/store/**",
+        "**/stores/**",
+        "**/state/**",
+        "**/context/**",
+        "**/contexts/**",
+        "*Slice.ts",
+        "*.slice.ts",
+        "*Store.ts"
+      ],
+      "name": "State"
+    },
+    {
+      "id": "services",
+      "patterns": [
+        "**/api/**",
+        "**/services/**",
+        "**/queries/**"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "utils",
+      "patterns": [
+        "**/utils/**",
+        "**/lib/**",
+        "**/helpers/**"
+      ],
+      "name": "Utilities"
+    },
+    {
+      "id": "types",
+      "patterns": [
+        "**/types/**",
+        "types.ts",
+        "*.types.ts",
+        "*.d.ts",
+        "**/models/**"
+      ],
+      "name": "Types"
+    },
+    {
+      "id": "entry",
+      "patterns": [
+        "main.tsx",
+        "main.jsx",
+        "index.tsx",
+        "index.jsx"
+      ],
+      "name": "Entry point"
+    }
+  ],
+  "rules": [
+    {
+      "id": "utils-services-no-ui",
+      "type": "calls",
+      "from": [
+        "utils",
+        "services"
+      ],
+      "to": [
+        "pages",
+        "components",
+        "hooks"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Utilities and services import no components, pages or hooks"
+    },
+    {
+      "id": "stores-no-ui",
+      "type": "calls",
+      "from": "stores",
+      "to": [
+        "pages",
+        "components"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "State imports no components or pages"
+    },
+    {
+      "id": "types-stay-low",
+      "type": "calls",
+      "from": "types",
+      "to": [
+        "pages",
+        "components",
+        "hooks",
+        "stores",
+        "services"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Types import nothing above them"
+    },
+    {
+      "id": "components-not-pages",
+      "type": "calls",
+      "from": "components",
+      "to": "pages",
+      "allow": false,
+      "scope": "any",
+      "text": "Components do not import pages"
+    }
+  ],
+  "layers": [
+    {
+      "name": "Views",
+      "match": [
+        "**/pages",
+        "**/routes",
+        "**/views",
+        "**/screens",
+        "**/pages/**",
+        "**/routes/**",
+        "**/views/**",
+        "**/screens/**",
+        "**/router",
+        "**/app"
+      ]
+    },
+    {
+      "name": "Components",
+      "match": [
+        "**/components",
+        "**/components/**"
+      ]
+    },
+    {
+      "name": "State",
+      "match": [
+        "**/hooks",
+        "**/store",
+        "**/stores",
+        "**/state",
+        "**/context",
+        "**/hooks/**",
+        "**/store/**",
+        "**/stores/**",
+        "**/state/**",
+        "**/context/**"
+      ]
+    },
+    {
+      "name": "Services",
+      "match": [
+        "**/api",
+        "**/api/**",
+        "**/services",
+        "**/services/**",
+        "**/queries"
+      ]
+    },
+    {
+      "name": "Base",
+      "match": [
+        "**/utils",
+        "**/utils/**",
+        "**/lib",
+        "**/types",
+        "**/types/**",
+        "**/helpers"
+      ]
+    }
+  ]
+}

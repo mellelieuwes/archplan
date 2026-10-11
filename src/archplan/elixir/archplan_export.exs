@@ -67,6 +67,7 @@ defmodule ArchplanElixir.Export do
     }
 
     types = types(ctx)
+    {signatures, literals, enums} = values(ctx)
 
     seq_dir =
       cond do
@@ -85,7 +86,10 @@ defmodule ArchplanElixir.Export do
       "files" => files(ctx),
       "policy" => policy(ctx, boundaries),
       "types" => types,
-      "sequences" => if(seq_dir, do: sequences(ctx, seq_dir), else: %{})
+      "sequences" => if(seq_dir, do: sequences(ctx, seq_dir), else: %{}),
+      "signatures" => signatures,
+      "literals" => literals,
+      "enums" => enums
     }
 
     json = C.json_encode(model)
@@ -101,10 +105,295 @@ defmodule ArchplanElixir.Export do
 
         IO.puts(:stderr,
           "archplan: #{map_size(model["components"])} components, #{length(model["dependencies"])} dependencies, " <>
-            "#{map_size(types)} types, #{map_size(model["sequences"])} sequences -> #{out}" <>
+            "#{map_size(types)} types, #{length(signatures)} signatures, #{length(literals)} literals, " <>
+            "#{length(enums)} enums, #{map_size(model["sequences"])} sequences -> #{out}" <>
             if(cfg_file, do: " (config #{Path.relative_to(cfg_file, root)})", else: "")
         )
     end
+  end
+
+  # ------------------------------------- signatures, literals and enums
+
+  @max_literals 200
+  # Atoms that tag results rather than name values.
+  @tags ~w(ok error noreply reply ignore)
+
+  # Signatures of def and defp functions (types from @spec), the atoms and
+  # strings the code matches on (case, function heads), compares, puts in map
+  # and struct fields or passes as keyword options, and enum-like value sets:
+  # Ecto.Enum fields and @type unions of atoms.
+  defp values(ctx) do
+    mods = ctx.mods |> Enum.sort_by(fn {m, _} -> ctx.rel[m] end)
+
+    results =
+      for {m, _} <- mods, not test_file?(ctx.rel[m]) do
+        base = %{"component" => ctx.comp_of[m], "file" => ctx.rel[m]}
+        defs = (ctx.debug[m] || %{})[:definitions] || []
+        specs = spec_map(m)
+        # Debug info holds expanded code: `use` and other macros add functions
+        # and clauses to the module. Keep what the module's own source shows.
+        lines = source_lines(ctx, m)
+        shows = fn line, text -> line != nil and String.contains?(Map.get(lines, line, ""), text) end
+
+        sigs =
+          for {{f, a}, kind, meta, [{_, args, _, _} | _] = clauses} <- defs,
+              kind in [:def, :defp],
+              s = Atom.to_string(f),
+              s not in @generated and not String.starts_with?(s, "__"),
+              shows.(meta[:line], s) do
+            {types, ret} = Map.get(specs, {f, a}, {List.duplicate(nil, a), nil})
+
+            params =
+              args
+              |> Enum.with_index()
+              |> Enum.map(fn {arg, i} ->
+                # The first clause that names the parameter, since a pattern has no name.
+                name =
+                  Enum.find_value(clauses, param_name(arg, i), fn {_, as, _, _} ->
+                    n = param_name(Enum.at(as, i), i)
+                    if n != "arg#{i + 1}" and n != "", do: n
+                  end)
+
+                %{"name" => name, "type" => Enum.at(types, i)}
+              end)
+
+            Map.merge(base, %{"id" => "#{C.mod_name(m)}.#{f}/#{a}", "line" => meta[:line], "name" => "#{f}/#{a}",
+              "params" => params, "returns" => ret, "public" => kind == :def})
+          end
+
+        lits =
+          defs
+          |> Enum.flat_map(fn {{f, a}, _kind, meta, clauses} ->
+            Enum.flat_map(clauses, fn {cmeta, args, guards, body} ->
+              line = cmeta[:line] || meta[:line]
+              # A function head dispatches on a message or event name; a value under a
+              # map key in the head still names a field.
+              head =
+                for {v, k} <- pattern_values(args),
+                    do: if(k, do: {v, line, "case", k, nil}, else: {v, line, "head", nil, "#{f}/#{a}"})
+              head ++ body_values(guards, line) ++ body_values(body, line)
+            end)
+          end)
+          |> Enum.filter(fn {v, line, _, _, _} ->
+            v not in @tags and (shows.(line, ~s("#{v}")) or shows.(line, ":#{v}") or shows.(line, "#{v}:"))
+          end)
+          |> Enum.take(@max_literals)
+          |> Enum.map(fn {v, line, context, field, target} ->
+            base
+            |> Map.merge(%{"value" => v, "line" => line, "context" => context})
+            |> put("field", field)
+            |> put("target", target)
+          end)
+
+        {sigs, lits, Enum.map(enum_sets(m), &Map.merge(base, &1))}
+      end
+
+    {Enum.flat_map(results, &elem(&1, 0)), Enum.flat_map(results, &elem(&1, 1)), Enum.flat_map(results, &elem(&1, 2))}
+  end
+
+  defp source_lines(ctx, m) do
+    path = Path.expand(ctx.rel[m] || "", ctx.root)
+
+    case File.read(path) do
+      {:ok, text} -> text |> String.split("\n") |> Enum.with_index(1) |> Map.new(fn {l, i} -> {i, l} end)
+      _ -> %{}
+    end
+  end
+
+  defp test_file?(rel), do: String.starts_with?(rel || "", "test/") or String.ends_with?(rel || "", "_test.exs")
+
+  # {f, a} => {[param type], return type} from the first clause of @spec.
+  defp spec_map(m) do
+    case Code.Typespec.fetch_specs(m) do
+      {:ok, list} ->
+        for {{f, a}, [spec | _]} <- list, into: %{} do
+          case Code.Typespec.spec_to_quoted(f, spec) do
+            {:when, _, [{:"::", _, [{_, _, args}, ret]}, _]} -> {{f, a}, {Enum.map(args || [], &type_str/1), type_str(ret)}}
+            {:"::", _, [{_, _, args}, ret]} -> {{f, a}, {Enum.map(args || [], &type_str/1), type_str(ret)}}
+            _ -> {{f, a}, {List.duplicate(nil, a), nil}}
+          end
+        end
+
+      _ ->
+        %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
+  defp type_str({:"::", _, [_name, t]}), do: type_str(t)
+  defp type_str(t), do: t |> Macro.to_string() |> squash() |> String.slice(0, 160)
+
+  defp param_name({name, _, ctx}, _i) when is_atom(name) and is_atom(ctx), do: to_string(name) |> String.trim_leading("_")
+  defp param_name({:=, _, [_, {name, _, ctx}]}, _i) when is_atom(name) and is_atom(ctx), do: to_string(name)
+  defp param_name({:=, _, [{name, _, ctx}, _]}, _i) when is_atom(name) and is_atom(ctx), do: to_string(name)
+  defp param_name(_, i), do: "arg#{i + 1}"
+
+  # A value worth reporting: a string without whitespace, or an atom that is
+  # not a boolean, nil or a module name.
+  defp value(v) when is_binary(v) do
+    if v != "" and String.length(v) <= 64 and not String.match?(v, ~r/\s/), do: v
+  end
+
+  defp value(v) when is_atom(v) and v not in [nil, true, false] do
+    s = Atom.to_string(v)
+    if not String.starts_with?(s, "Elixir.") and String.length(s) <= 64, do: s
+  end
+
+  defp value(_), do: nil
+
+  # {value, field} for the atoms and strings in a pattern. A value under a map
+  # or struct key gets that key as its field; map keys themselves are left out.
+  defp pattern_values(p, field \\ nil)
+
+  defp pattern_values({:%{}, _, kvs}, field) when is_list(kvs) do
+    Enum.flat_map(kvs, fn
+      {k, v} when is_atom(k) or is_binary(k) -> pattern_values(v, to_string(k))
+      {_k, v} -> pattern_values(v, field)
+      x -> pattern_values(x, field)
+    end)
+  end
+
+  defp pattern_values({:%, _, [_struct, map]}, field), do: pattern_values(map, field)
+  defp pattern_values({:<<>>, _, _}, _), do: []
+  defp pattern_values({:^, _, _}, _), do: []
+  defp pattern_values({name, meta, ctx}, _) when is_atom(name) and is_list(meta) and is_atom(ctx), do: []
+  defp pattern_values({:{}, _, elems}, field), do: Enum.flat_map(elems, &pattern_values(&1, field))
+  defp pattern_values({:=, _, [a, b]}, field), do: pattern_values(a, field) ++ pattern_values(b, field)
+  defp pattern_values({:|, _, [a, b]}, field), do: pattern_values(a, field) ++ pattern_values(b, field)
+  defp pattern_values({_, meta, _}, _) when is_list(meta), do: []
+  defp pattern_values({a, b}, field), do: pattern_values(a, field) ++ pattern_values(b, field)
+  defp pattern_values(l, field) when is_list(l), do: Enum.flat_map(l, &pattern_values(&1, field))
+  defp pattern_values(v, field), do: if(s = value(v), do: [{s, field}], else: [])
+
+  @compare [:==, :===, :!=, :!==, :"=:=", :"=/=", :"/="]
+
+  # [{value, line, context, field, target}] in an expression.
+  defp body_values({:case, meta, [expr, [do: clauses]]}, line) do
+    line = meta[:line] || line
+    field = expr_name(expr)
+
+    arms =
+      for {:->, cm, [[pat], arm]} <- List.wrap(clauses) do
+        l = cm[:line] || line
+        for({v, k} <- pattern_values(strip_when(pat)), do: {v, l, "case", k || field, nil}) ++ body_values(arm, l)
+      end
+
+    body_values(expr, line) ++ List.flatten(arms)
+  end
+
+  defp body_values({{:., _, [:erlang, op]}, meta, [a, b]}, line) when op in @compare,
+    do: compare(a, b, meta[:line] || line)
+
+  defp body_values({op, meta, [a, b]}, line) when op in @compare, do: compare(a, b, meta[:line] || line)
+
+  defp body_values({{:., _, [mod, fun]}, meta, [x, list]}, line)
+       when mod in [Enum, :lists] and fun in [:member?, :member] and is_list(list) do
+    {x, list} = if fun == :member, do: {list, x}, else: {x, list}
+    l = meta[:line] || line
+    vals = if is_list(list), do: Enum.map(list, &value/1), else: []
+
+    if vals != [] and Enum.all?(vals),
+      do: for(v <- vals, do: {v, l, "compare", expr_name(x), nil}),
+      else: body_values(x, l)
+  end
+
+  defp body_values({:%{}, meta, kvs}, line) when is_list(kvs) do
+    l = meta[:line] || line
+
+    Enum.flat_map(kvs, fn
+      {k, v} when is_atom(k) -> (if s = value(v), do: [{s, l, "assign", to_string(k), nil}], else: []) ++ body_values(v, l)
+      {:|, _, [m, kw]} when is_list(kw) -> body_values(m, l) ++ body_values({:%{}, [line: l], kw}, l)
+      x -> body_values(x, l)
+    end)
+  end
+
+  defp body_values({call, meta, args}, line) when is_list(meta) and is_list(args) do
+    l = meta[:line] || line
+
+    opts =
+      case List.last(args) do
+        kw when is_list(kw) and kw != [] and call not in [:__block__, :->, :fn, :=] ->
+          if Keyword.keyword?(kw),
+            do: for({k, v} <- kw, s = value(v), do: {s, l, "arg", to_string(k), call_name(call)}),
+            else: []
+
+        _ ->
+          []
+      end
+
+    opts ++ body_values(call, l) ++ Enum.flat_map(args, &body_values(&1, l))
+  end
+
+  defp body_values(t, line) when is_tuple(t), do: t |> Tuple.to_list() |> body_values(line)
+  defp body_values(l, line) when is_list(l), do: Enum.flat_map(l, &body_values(&1, line))
+  defp body_values(_, _), do: []
+
+  defp compare(a, b, line) do
+    case {value(a), value(b)} do
+      {nil, nil} -> body_values(a, line) ++ body_values(b, line)
+      {nil, v} -> [{v, line, "compare", expr_name(a), nil} | body_values(a, line)]
+      {v, _} -> [{v, line, "compare", expr_name(b), nil} | body_values(b, line)]
+    end
+  end
+
+  defp strip_when({:when, _, [pat | _]}), do: pat
+  defp strip_when(pat), do: pat
+
+  defp expr_name({name, meta, ctx}) when is_atom(name) and is_list(meta) and is_atom(ctx), do: to_string(name)
+  defp expr_name({{:., _, [_, key]}, _, []}) when is_atom(key), do: to_string(key)
+  defp expr_name({{:., _, [Map, f]}, _, [_, key]}) when f in [:get, :fetch!, :fetch] and is_atom(key), do: to_string(key)
+  defp expr_name({{:., _, [:maps, :get]}, _, [key, _]}) when is_atom(key), do: to_string(key)
+  defp expr_name({{:., _, [_, f]}, _, _}) when is_atom(f), do: to_string(f)
+  defp expr_name(_), do: nil
+
+  defp call_name({:., _, [_, f]}) when is_atom(f), do: to_string(f)
+  defp call_name(f) when is_atom(f), do: to_string(f)
+  defp call_name(_), do: nil
+
+  # Ecto.Enum fields and @type unions of atoms: [%{"name", "line", "values"}].
+  defp enum_sets(m) do
+    ecto =
+      if function_exported?(m, :__schema__, 1) do
+        for f <- m.__schema__(:fields),
+            vals = ecto_values(m, f),
+            vals != [] do
+          %{"name" => "#{C.mod_name(m)}.#{f}", "values" => Enum.map(vals, &to_string/1)}
+        end
+      else
+        []
+      end
+
+    typed =
+      case Code.Typespec.fetch_types(m) do
+        {:ok, list} ->
+          for {kind, {name, {:type, anno, :union, alts}, _}} <- list,
+              kind in [:type, :opaque],
+              Enum.all?(alts, &match?({:atom, _, _}, &1)),
+              length(alts) >= 2 do
+            %{"name" => "#{C.mod_name(m)}.#{name}", "line" => :erl_anno.line(anno),
+              "values" => for({:atom, _, a} <- alts, do: to_string(a))}
+          end
+
+        _ ->
+          []
+      end
+
+    ecto ++ typed
+  rescue
+    _ -> []
+  end
+
+  defp ecto_values(m, f) do
+    case m.__schema__(:type, f) do
+      {:parameterized, {Ecto.Enum, _}} -> apply(Ecto.Enum, :values, [m, f])
+      {:parameterized, Ecto.Enum, _} -> apply(Ecto.Enum, :values, [m, f])
+      {:array, {:parameterized, {Ecto.Enum, _}}} -> apply(Ecto.Enum, :values, [m, f])
+      {:array, {:parameterized, Ecto.Enum, _}} -> apply(Ecto.Enum, :values, [m, f])
+      _ -> []
+    end
+  rescue
+    _ -> []
   end
 
   # ------------------------------------------------------------- source
@@ -122,7 +411,8 @@ defmodule ArchplanElixir.Export do
       "module" => to_string(Mix.Project.config()[:app] || Path.basename(ctx.project_dir)),
       "generator" => "archplan exporters/elixir",
       "generatedAt" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
-      "commands" => %{"build" => cd <> "mix compile", "test" => cd <> "mix test"}
+      "commands" => %{"build" => cd <> "mix compile", "test" => cd <> "mix test"},
+      "capabilities" => ["components", "types", "fields", "deps", "files", "signatures", "literals"]
     }
   end
 

@@ -13,7 +13,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import brief, handover, hotspots
+from . import brief, detectors, handover, hotspots
 from .architecture import Architecture, ArchitectureError
 from .findings import Findings
 from .vocab import Vocab
@@ -38,10 +38,10 @@ def changes(p: Project, store: Store) -> dict:
          "suggestions_version": Suggestions(p.dir).version(), "handover_version": Handovers(p.dir).version(),
          "architecture_etag": etag(p.path("architecture.json")), "findings_etag": etag(p.path("baseline.json")),
          "vocabulary_etag": etag(p.path("vocabulary.json")), "suggest_etag": etag(p.path("config.json")),
-         "activity_etag": etag(p.path("activity.json"))}
+         "activity_etag": etag(p.path("activity.json")), "detectors_version": detectors.version(p)}
     c["key"] = ".".join(str(c[k]) for k in ("version", "model_etag", "target_rev", "suggestions_version",
                                             "handover_version", "architecture_etag", "findings_etag", "vocabulary_etag",
-                                            "suggest_etag", "activity_etag"))
+                                            "suggest_etag", "activity_etag", "detectors_version"))
     return c
 
 
@@ -164,12 +164,30 @@ def make_handler(p: Project, store: Store):
                         return self.send_json({**arch.state(), **changes(p, store)})
                 except ArchitectureError as e:
                     return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
+            if path == "/api/schema":
+                from . import schema as schema_mod
+                sch = (read_json(p.model_path) or {}).get("schema")
+                if not sch:
+                    return self.send_json({"error": "the model has no schema section; no database schema source "
+                                                    "was found (see `archplan schema`)"}, HTTPStatus.NOT_FOUND)
+                return self.send_json({**sch, "summary": schema_mod.summary(sch),
+                                       "cross_fks": schema_mod.cross_fks(sch)})
             if path == "/api/findings":
                 try:
                     with arch_lock:
                         return self.send_json({**findings.listing(store), **changes(p, store)})
                 except ArchitectureError as e:
                     return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
+            if path in ("/api/detectors", "/api/metrics"):
+                try:
+                    with arch_lock:
+                        res = findings.result()
+                except ArchitectureError as e:
+                    return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
+                if path == "/api/metrics":
+                    return self.send_json({"metrics": res["extras"].get("metrics") or {}, **changes(p, store)})
+                return self.send_json({"detectors": res["detectors"], "missing": res["missing"],
+                                       "capabilities": res["capabilities"], **changes(p, store)})
             if path == "/api/vocabulary/candidates":
                 try:
                     with vocab_lock:
@@ -336,6 +354,9 @@ def make_handler(p: Project, store: Store):
                         return self.send_json({"profile": arch.save(b["profile"]), **changes(p, store)})
                 if parts == ["api", "refactors", "order"]:
                     return self.send_json({"refactors": handover.reorder(store, b.get("ids")), **changes(p, store)})
+                if len(parts) == 3 and parts[:2] == ["api", "detectors"]:
+                    e = detectors.configure(p, unquote(parts[2]), b.get("enabled"), b.get("params"))
+                    return self.send_json({"detector": parts[2], "config": e, **changes(p, store)})
                 if parts == ["api", "suggest", "auto"]:
                     brief.set_auto(p, b.get("on"), b.get("count"))
                     if b.get("on"):

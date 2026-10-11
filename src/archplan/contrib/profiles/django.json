@@ -1,0 +1,265 @@
+{
+  "name": "django",
+  "title": "Django apps",
+  "language": "python",
+  "description": "Django projects: one unit per app (a folder with apps.py or models.py).",
+  "detect": {
+    "priority": 50,
+    "any": [
+      {
+        "files": [
+          {
+            "glob": "**/*/apps.py",
+            "min": 2
+          }
+        ]
+      },
+      {
+        "files": [
+          "**/*/apps.py",
+          "**/settings.py"
+        ]
+      },
+      {
+        "files": [
+          "**/*/apps.py",
+          "**/settings/**"
+        ]
+      }
+    ]
+  },
+  "base": [
+    "apps.py",
+    "models.py"
+  ],
+  "units": [
+    {
+      "kind": "App",
+      "glob": "{base}/**",
+      "require": [
+        "apps.py",
+        "models.py",
+        "models/"
+      ],
+      "exclude": [
+        "migrations/**",
+        "tests/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "models",
+      "name": "Models",
+      "patterns": [
+        "models.py",
+        "models/**"
+      ],
+      "color": "#2563eb",
+      "description": "Django models"
+    },
+    {
+      "id": "views",
+      "name": "Views",
+      "patterns": [
+        "views.py",
+        "views/**"
+      ],
+      "color": "#16a34a",
+      "description": "Django views"
+    },
+    {
+      "id": "forms",
+      "name": "Forms",
+      "patterns": [
+        "forms.py",
+        "forms/**"
+      ],
+      "color": "#d97706",
+      "description": "Django forms"
+    },
+    {
+      "id": "urls",
+      "name": "URLs",
+      "patterns": [
+        "urls.py",
+        "api/urls.py"
+      ],
+      "color": "#9333ea",
+      "description": "Django urls"
+    },
+    {
+      "id": "admin",
+      "name": "Admin",
+      "patterns": [
+        "admin.py",
+        "admin/**"
+      ],
+      "color": "#dc2626",
+      "description": "Django admin"
+    },
+    {
+      "id": "serializers",
+      "name": "Serializers",
+      "patterns": [
+        "serializers.py",
+        "serializers/**",
+        "api/serializers.py",
+        "api/serializers/**"
+      ],
+      "color": "#0891b2",
+      "description": "Django serializers"
+    },
+    {
+      "id": "viewsets",
+      "name": "Viewsets",
+      "patterns": [
+        "viewsets.py",
+        "viewsets/**",
+        "api/viewsets.py",
+        "api/viewsets/**",
+        "api/views.py",
+        "api.py"
+      ],
+      "color": "#65a30d",
+      "description": "Django viewsets"
+    },
+    {
+      "id": "filters",
+      "name": "Filters",
+      "patterns": [
+        "filters.py",
+        "api/filters.py",
+        "filters/**"
+      ],
+      "color": "#db2777",
+      "description": "Django filters"
+    },
+    {
+      "id": "signals",
+      "name": "Signals",
+      "patterns": [
+        "signals.py",
+        "signals/**",
+        "receivers.py"
+      ],
+      "color": "#4f46e5",
+      "description": "Django signals"
+    },
+    {
+      "id": "tasks",
+      "name": "Tasks",
+      "patterns": [
+        "tasks.py",
+        "tasks/**"
+      ],
+      "color": "#ca8a04",
+      "description": "Django tasks"
+    },
+    {
+      "id": "services",
+      "name": "Services",
+      "patterns": [
+        "services.py",
+        "services/**"
+      ],
+      "color": "#0d9488",
+      "description": "Django services"
+    },
+    {
+      "id": "managers",
+      "name": "Managers",
+      "patterns": [
+        "managers.py",
+        "querysets.py",
+        "query.py",
+        "models/managers.py",
+        "models/query.py"
+      ],
+      "color": "#7c3aed",
+      "description": "Django managers"
+    },
+    {
+      "id": "templatetags",
+      "name": "Template tags",
+      "patterns": [
+        "templatetags/**"
+      ],
+      "color": "#ea580c",
+      "description": "Django template tags"
+    },
+    {
+      "id": "commands",
+      "name": "Management commands",
+      "patterns": [
+        "management/commands/**"
+      ],
+      "color": "#475569",
+      "description": "Django management commands"
+    },
+    {
+      "id": "validators",
+      "name": "Validators",
+      "patterns": [
+        "validators.py",
+        "api/validators.py",
+        "validators/**"
+      ],
+      "color": "#2563eb",
+      "description": "Django validators"
+    },
+    {
+      "id": "permissions",
+      "name": "Permissions",
+      "patterns": [
+        "permissions.py",
+        "api/permissions.py"
+      ],
+      "color": "#16a34a",
+      "description": "Django permissions"
+    }
+  ],
+  "rules": [
+    {
+      "id": "models-stay-low",
+      "type": "calls",
+      "from": "models",
+      "to": [
+        "views",
+        "forms",
+        "admin",
+        "serializers",
+        "urls",
+        "viewsets"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Models do not import views, viewsets, forms, admin, serializers or urls"
+    },
+    {
+      "id": "apps-keep-views-private",
+      "type": "calls",
+      "from": "other-units",
+      "to": [
+        "views",
+        "admin",
+        "urls"
+      ],
+      "allow": false,
+      "scope": "other-units",
+      "text": "Other apps do not import an app's views, admin or urls"
+    },
+    {
+      "id": "serializers-not-views",
+      "type": "calls",
+      "from": "serializers",
+      "to": [
+        "views",
+        "viewsets"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Serializers do not import views or viewsets"
+    }
+  ]
+}

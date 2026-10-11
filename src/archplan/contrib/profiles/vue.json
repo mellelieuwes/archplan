@@ -1,0 +1,257 @@
+{
+  "name": "vue",
+  "title": "Vue app",
+  "language": "typescript",
+  "description": "Vue 3: src/ as one unit (plus src/features/* when it exists). Views compose components; composables, stores and services hold the logic; utilities and types depend on nothing above them. Tests are left out.",
+  "detect": {
+    "priority": 50,
+    "deps": [
+      "vue"
+    ],
+    "files": [
+      "**/src/**"
+    ]
+  },
+  "units": [
+    {
+      "kind": "App",
+      "glob": "**/src",
+      "require": [
+        "components/",
+        "views/",
+        "pages/",
+        "App.vue",
+        "main.ts",
+        "main.js"
+      ],
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    {
+      "kind": "Feature",
+      "glob": "**/src/features/*",
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    {
+      "kind": "Feature",
+      "glob": "**/src/modules/*",
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "views",
+      "patterns": [
+        "**/views/**",
+        "**/pages/**",
+        "App.vue"
+      ],
+      "name": "Views"
+    },
+    {
+      "id": "components",
+      "patterns": [
+        "*.vue",
+        "**/components/**",
+        "**/widgets/**"
+      ],
+      "name": "Components"
+    },
+    {
+      "id": "composables",
+      "patterns": [
+        "**/composables/**",
+        "use[A-Z]*.ts",
+        "use[A-Z]*.js"
+      ],
+      "name": "Composables"
+    },
+    {
+      "id": "stores",
+      "patterns": [
+        "**/stores/**",
+        "**/store/**",
+        "*Store.ts",
+        "*.store.ts"
+      ],
+      "name": "Stores"
+    },
+    {
+      "id": "services",
+      "patterns": [
+        "**/api/**",
+        "**/services/**",
+        "**/queries/**"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "router",
+      "patterns": [
+        "**/router/**"
+      ],
+      "name": "Router"
+    },
+    {
+      "id": "utils",
+      "patterns": [
+        "**/utils/**",
+        "**/lib/**",
+        "**/helpers/**"
+      ],
+      "name": "Utilities"
+    },
+    {
+      "id": "types",
+      "patterns": [
+        "**/types/**",
+        "types.ts",
+        "*.types.ts",
+        "*.d.ts",
+        "**/models/**"
+      ],
+      "name": "Types"
+    },
+    {
+      "id": "entry",
+      "patterns": [
+        "main.ts",
+        "main.js"
+      ],
+      "name": "Entry point"
+    }
+  ],
+  "rules": [
+    {
+      "id": "utils-services-no-ui",
+      "type": "calls",
+      "from": [
+        "utils",
+        "services"
+      ],
+      "to": [
+        "views",
+        "components",
+        "composables"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Utilities and services import no components, views or composables"
+    },
+    {
+      "id": "stores-no-ui",
+      "type": "calls",
+      "from": "stores",
+      "to": [
+        "views",
+        "components"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Stores import no components or views"
+    },
+    {
+      "id": "types-stay-low",
+      "type": "calls",
+      "from": "types",
+      "to": [
+        "views",
+        "components",
+        "composables",
+        "stores",
+        "services",
+        "router"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Types import nothing above them"
+    },
+    {
+      "id": "components-not-views",
+      "type": "calls",
+      "from": "components",
+      "to": [
+        "views",
+        "router"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Components do not import views or the router"
+    }
+  ],
+  "layers": [
+    {
+      "name": "Views",
+      "match": [
+        "**/views",
+        "**/pages",
+        "**/views/**",
+        "**/pages/**",
+        "**/router",
+        "**/app"
+      ]
+    },
+    {
+      "name": "Components",
+      "match": [
+        "**/components",
+        "**/widgets",
+        "**/components/**",
+        "**/widgets/**"
+      ]
+    },
+    {
+      "name": "State",
+      "match": [
+        "**/composables",
+        "**/stores",
+        "**/composables/**",
+        "**/stores/**"
+      ]
+    },
+    {
+      "name": "Services",
+      "match": [
+        "**/api",
+        "**/api/**",
+        "**/services",
+        "**/services/**",
+        "**/queries"
+      ]
+    },
+    {
+      "name": "Base",
+      "match": [
+        "**/utils",
+        "**/utils/**",
+        "**/lib",
+        "**/types",
+        "**/types/**",
+        "**/helpers"
+      ]
+    }
+  ]
+}

@@ -5,7 +5,10 @@ Dependencies are imports between them. Types are top-level classes, with
 annotated fields (and ORM fields such as Django's models.CharField), public
 methods and base classes. Forbidden contracts from
 import-linter become deny rules. The files section lists, per module file, the
-project files it imports. Tests and Django migrations are left out.
+project files it imports. Signatures list functions and methods; literals
+list string values the code compares, matches, assigns, uses as defaults or
+passes as keyword arguments; enums list Enum and Django choices classes.
+Tests and Django migrations are left out.
 """
 
 from __future__ import annotations
@@ -16,6 +19,9 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
+
+from .safeio import GIT_SAFE, read_file
+from .safeio import files as safe_files
 
 SKIP = {".git", ".hg", ".venv", "venv", "env", "node_modules", "build", "dist", "__pycache__", ".tox", ".nox",
         ".mypy_cache", ".pytest_cache", ".ruff_cache", "site-packages", ".archplan", ".ignored", "migrations"}
@@ -39,14 +45,15 @@ RECORD_BASES = {"NamedTuple", "TypedDict", "BaseModel"}
 
 
 def source_root(root: Path) -> Path:
-    return root / "src" if (root / "src").is_dir() else root
+    src = root / "src"
+    return src if src.is_dir() and not src.is_symlink() else root
 
 
 TESTS = {"tests", "test", "testing"}
 
 
 def files(base: Path, tests: bool = False):
-    for p in sorted(base.rglob("*.py")):
+    for p in safe_files(base, ".py", SKIP):
         rel = p.relative_to(base).parts
         if any(x in SKIP or x.startswith(".") or (not tests and x in TESTS) for x in rel[:-1]):
             continue
@@ -77,9 +84,9 @@ def resolve_relative(mod: str, is_pkg: bool, level: int, name: str | None) -> st
 
 def git_ref(root: Path) -> tuple[str, bool]:
     try:
-        ref = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root, capture_output=True, text=True,
+        ref = subprocess.run(["git", *GIT_SAFE, "rev-parse", "--short", "HEAD"], cwd=root, capture_output=True, text=True,
                              timeout=10).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True,
+        dirty = bool(subprocess.run(["git", *GIT_SAFE, "status", "--porcelain"], cwd=root, capture_output=True, text=True,
                                     timeout=30).stdout.strip())
         return ref or "?", dirty
     except (OSError, subprocess.SubprocessError):
@@ -93,8 +100,8 @@ def import_linter_rules(root: Path) -> list:
     if cfg.is_file() and sys.version_info >= (3, 11):
         import tomllib
         try:
-            data = tomllib.loads(cfg.read_text())
-        except tomllib.TOMLDecodeError:
+            data = tomllib.loads(read_file(cfg))
+        except (OSError, tomllib.TOMLDecodeError):
             data = {}
         for c in data.get("tool", {}).get("importlinter", {}).get("contracts", []):
             if c.get("type") == "forbidden":
@@ -105,7 +112,10 @@ def import_linter_rules(root: Path) -> list:
     if ini.is_file():
         import configparser
         cp = configparser.ConfigParser()
-        cp.read(ini)
+        try:
+            cp.read_string(read_file(ini))
+        except (OSError, configparser.Error):
+            return rules
         for sec in cp.sections():
             if cp[sec].get("type") == "forbidden":
                 srcs = cp[sec].get("source_modules", "").split()
@@ -131,8 +141,8 @@ def export(root: Path, packages: list[str] | None = None, granularity: str = "au
         if not name or (packages and name.split(".")[0] not in packages):
             continue
         try:
-            tree = ast.parse(f.read_text(encoding="utf-8", errors="replace"), str(f))
-        except SyntaxError:
+            tree = ast.parse(read_file(f), str(f))
+        except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
             continue
         mods[name] = Module(name, f, str(f.relative_to(root)), tree, f.name == "__init__.py")
 
@@ -346,13 +356,15 @@ def export(root: Path, packages: list[str] | None = None, granularity: str = "au
     rules = [r for r in import_linter_rules(root) if comp_for(r["from"]) and comp_for(r["to"])]
     for r in rules:
         r["from"], r["to"] = comp_for(r["from"]), comp_for(r["to"])
+    signatures, literals, enums = values_of(mods, comp_of_mod)
     ref, dirty = git_ref(root)
     return {
         "format": "archmodel/1",
         "source": {"repo": root.name, "ref": ref, "dirty": dirty, "languages": ["python"],
                    "generator": "archplan export-python",
                    "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                   "commands": {"test": "python -m pytest"}},
+                   "commands": {"test": "python -m pytest"},
+                   "capabilities": ["components", "types", "fields", "deps", "files", "signatures", "literals"]},
         "layers": [],
         "components": comps,
         "dependencies": deps,
@@ -361,4 +373,147 @@ def export(root: Path, packages: list[str] | None = None, granularity: str = "au
                    **({"enforcer": {"tool": "import-linter", "command": "lint-imports"}} if rules else {})},
         "types": types,
         "sequences": {},
+        "signatures": signatures,
+        "literals": literals,
+        "enums": enums,
     }
+
+
+MAX_LITERALS = 200  # per file
+CHOICES_BASES = {"TextChoices", "IntegerChoices", "Choices", "DjangoChoices"}
+
+
+def name_of(e: ast.expr | None) -> str | None:
+    """The name a literal is compared with or assigned to: status, x.status, x["status"], get_status()."""
+    if isinstance(e, ast.Name):
+        return e.id
+    if isinstance(e, ast.Attribute):
+        return e.attr
+    if isinstance(e, ast.Subscript):
+        sl = e.slice.value if isinstance(e.slice, ast.Index) else e.slice  # ast.Index before 3.9
+        if isinstance(sl, ast.Constant) and isinstance(sl.value, str):
+            return sl.value
+    if isinstance(e, ast.Call):
+        return name_of(e.func)
+    return None
+
+
+def string(e) -> str | None:
+    return e.value if isinstance(e, ast.Constant) and isinstance(e.value, str) else None
+
+
+def signature(sid: str, fn, comp: str, rel: str, public: bool, method: bool) -> dict:
+    a = fn.args
+    params = [x for x in a.posonlyargs + a.args + a.kwonlyargs]
+    if method and params and params[0].arg in ("self", "cls"):
+        params = params[1:]
+    params += [x for x in (a.vararg, a.kwarg) if x is not None]
+    return {"id": sid, "component": comp, "file": rel, "line": fn.lineno, "name": fn.name,
+            "params": [{"name": x.arg, "type": ast.unparse(x.annotation) if x.annotation else None} for x in params],
+            "returns": ast.unparse(fn.returns) if fn.returns else None, "public": public}
+
+
+def choice_values(e) -> list:
+    """The stored values of a Django choices list: [("draft", "Draft"), ...]."""
+    if not isinstance(e, (ast.List, ast.Tuple)):
+        return []
+    out = []
+    for x in e.elts:
+        if isinstance(x, (ast.List, ast.Tuple)) and x.elts and string(x.elts[0]) is not None:
+            out.append(x.elts[0])
+    return out
+
+
+def values_of(mods: dict, comp_of_mod: dict) -> tuple:
+    """(signatures, literals, enums) for the modules."""
+    signatures, literals, enums = [], [], []
+    funcs = (ast.FunctionDef, ast.AsyncFunctionDef)
+    match = getattr(ast, "Match", None)
+    for m in sorted(mods.values(), key=lambda m: m.rel):
+        comp = comp_of_mod[m.name]
+        for node in m.tree.body:
+            if isinstance(node, funcs):
+                signatures.append(signature(f"{m.name}.{node.name}", node, comp, m.rel,
+                                            not node.name.startswith("_"), False))
+            elif isinstance(node, ast.ClassDef):
+                for x in node.body:
+                    if isinstance(x, funcs):
+                        pub = not node.name.startswith("_") and (not x.name.startswith("_") or x.name == "__init__")
+                        signatures.append(signature(f"{m.name}.{node.name}.{x.name}", x, comp, m.rel, pub, True))
+                bases = {ast.unparse(b).split(".")[-1].split("[")[0] for b in node.bases}
+                if bases & (ENUM_BASES | CHOICES_BASES):
+                    vals = []
+                    for x in node.body:
+                        if isinstance(x, ast.Assign) and len(x.targets) == 1 and isinstance(x.targets[0], ast.Name):
+                            v = x.value.elts[0] if isinstance(x.value, ast.Tuple) and x.value.elts else x.value
+                            if isinstance(v, ast.Constant) and isinstance(v.value, (str, int)) \
+                                    and not isinstance(v.value, bool):
+                                vals.append(v.value)
+                            elif isinstance(v, ast.Call) and ast.unparse(v.func).endswith("auto"):
+                                vals.append(x.targets[0].id.lower())
+                            elif isinstance(v, ast.Call) and v.args and string(v.args[0]) is not None:
+                                vals.append(v.args[0].value)  # DjangoChoices: draft = ChoiceItem("draft", ...)
+                    if vals:
+                        enums.append({"name": node.name, "component": comp, "file": m.rel, "line": node.lineno,
+                                      "values": vals})
+        n = [0]
+
+        def lit(value, node, context, field=None, target=None):
+            if n[0] >= MAX_LITERALS or not value or len(value) > 64 or any(c.isspace() for c in value):
+                return
+            n[0] += 1
+            literals.append({"value": value, "component": comp, "file": m.rel, "line": node.lineno,
+                             "context": context, **({"field": field} if field else {}),
+                             **({"target": target} if target else {})})
+
+        def choices(e, field, context, target=None):
+            for v in choice_values(e):
+                lit(v.value, v, context, field, target)
+
+        for parent in ast.walk(m.tree):
+            if isinstance(parent, funcs):
+                a = parent.args
+                pos = a.posonlyargs + a.args
+                for arg, d in list(zip(pos[len(pos) - len(a.defaults):], a.defaults)) + list(zip(a.kwonlyargs, a.kw_defaults)):
+                    if string(d) is not None:
+                        lit(d.value, d, "default", arg.arg, parent.name)
+            elif isinstance(parent, ast.Compare):
+                sides = [parent.left] + parent.comparators
+                for op, (left, right) in zip(parent.ops, zip(sides, sides[1:])):
+                    if isinstance(op, (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)):
+                        if string(right) is not None:
+                            lit(right.value, right, "compare", name_of(left))
+                        elif string(left) is not None:
+                            lit(left.value, left, "compare", name_of(right))
+                    elif isinstance(op, (ast.In, ast.NotIn)) and isinstance(right, (ast.Tuple, ast.List, ast.Set)) \
+                            and right.elts and all(string(e) is not None for e in right.elts):
+                        for e in right.elts:
+                            lit(e.value, e, "compare", name_of(left))
+            elif match is not None and isinstance(parent, match):
+                field = name_of(parent.subject)
+                for case in parent.cases:
+                    for p in ast.walk(case.pattern):
+                        if isinstance(p, ast.MatchValue) and string(p.value) is not None:
+                            lit(p.value.value, p.value, "case", field)
+            elif isinstance(parent, (ast.Assign, ast.AnnAssign)):
+                targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+                for t in targets:
+                    if isinstance(t, ast.Attribute) and string(parent.value) is not None:
+                        lit(parent.value.value, parent.value, "assign", t.attr)
+                    elif isinstance(t, ast.Name) and t.id.upper().endswith("CHOICES"):
+                        choices(parent.value, t.id, "assign")
+            elif isinstance(parent, ast.ClassDef):
+                for x in parent.body:  # class attributes: status = "draft"
+                    if isinstance(x, ast.Assign) and len(x.targets) == 1 and isinstance(x.targets[0], ast.Name) \
+                            and string(x.value) is not None:
+                        lit(x.value.value, x.value, "assign", x.targets[0].id)
+            elif isinstance(parent, ast.Call):
+                callee = name_of(parent.func)
+                for kw in parent.keywords:
+                    if kw.arg is None:
+                        continue
+                    if string(kw.value) is not None:
+                        lit(kw.value.value, kw.value, "arg", kw.arg, callee)
+                    elif kw.arg == "choices":
+                        choices(kw.value, kw.arg, "arg", callee)
+    return signatures, literals, enums

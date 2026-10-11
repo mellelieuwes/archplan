@@ -1,0 +1,23 @@
+{
+  "name": "python",
+  "title": "Python (ast)",
+  "languages": [
+    "python"
+  ],
+  "priority": 70,
+  "detect": {
+    "manifests": {
+      "pyproject.toml": [],
+      "setup.py": [],
+      "setup.cfg": []
+    }
+  },
+  "command": "archplan export-python -o {out}",
+  "capabilities": [
+    "components",
+    "types",
+    "fields",
+    "deps",
+    "files"
+  ]
+}

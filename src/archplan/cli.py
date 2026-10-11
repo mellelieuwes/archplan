@@ -10,12 +10,19 @@
   archplan mcp                   MCP server on stdio, for an agent
   archplan watch                 one line per human comment, plan change or decided suggestion
   archplan hotspots [--since N]  components that change often, and ones that change together
-  archplan profile [infer|show]  the architecture profile: roles, rules and where the code breaks them
+  archplan profile [infer|show|list|use NAME]  the architecture profile: roles, rules and where the code breaks them
   archplan check [--format github]  new findings (cycles, rule breaks, ...); exit 1 when there are any
+  archplan detectors [enable|disable|trust|run ID]  the checks behind the findings, and their settings
+  archplan schema [show|tables] [--json] [--sqlite FILE] [--postgres --url-env VAR]
+                                 database tables, their owners and who reads or writes them
   archplan glossary candidates   candidate glossary terms per component, from tf-idf over the code
   archplan hook                  Claude Code hook: tell the agent about new comments
   archplan export-python         built-in exporter for Python projects
+  archplan export-lite           approximate exporter for Java, Kotlin, Scala, C#, PHP, Ruby, Rust and Swift
+  archplan exporters             which exporters match this repository, and whether they are installed
+  archplan export-check FILE     check a model against the exporter plugin contract
   archplan export-elixir         exporter for Elixir/Mix projects (needs mix)
+  archplan export-ts             exporter for TypeScript and JavaScript projects (needs node)
   archplan trace-elixir          run mix tests and record call sequences
 """
 
@@ -33,7 +40,7 @@ import webbrowser
 from pathlib import Path
 
 from . import __version__
-from .project import Project, ProjectError, counts, find_root, init, read_json, write_json
+from .project import Project, ProjectError, changed_note, counts, find_root, init, read_json, write_json
 from .handover import Handovers
 from .store import Store, mentions, needs, who_next
 
@@ -77,7 +84,14 @@ def cmd_init(a):
     print(f"created {p.dir}/config.json")
     if p.export_command():
         print(f"export command: {p.export_command()}")
-        print("next: archplan export && archplan up")
+        if p.trusted():
+            print("next: archplan export && archplan up")
+        else:
+            found = getattr(p, "found", None) or {}
+            why = ("it comes from this repository's .archplan/exporters" if found.get("trusted_source") is False
+                   else "it runs code from this repository (for example the project's own compiler or build files)")
+            print(f"not approved yet: {why}. Read the command, then run `archplan trust` in a terminal.")
+            print("next: archplan trust && archplan export && archplan up")
     else:
         print("no exporter for this language yet: set \"export\" in config.json to a command that writes "
               f"{p.model_path.relative_to(p.root)} (format: archmodel/1), then run archplan export")
@@ -93,10 +107,15 @@ def confirm_trust(p: Project) -> None:
     """Ask a person, at a terminal, to approve the export command before it
     first runs here. There is no flag to skip this: an agent must not be able
     to approve a command a cloned repository supplied."""
-    if p.trusted() or not p.export_command():
+    ok, changed = p.trust_state()
+    if ok or not p.export_command():
         return
-    print(f"The export command in {p.dir / 'config.json'} is new on this machine:\n  {shown(p.export_command())}",
-          file=sys.stderr)
+    if changed:
+        print(f"The export command in {p.dir / 'config.json'} was approved, but files it runs changed since:\n  "
+              + "\n  ".join(shown(f) for f in changed) + f"\nCommand:\n  {shown(p.export_command())}", file=sys.stderr)
+    else:
+        print(f"The export command in {p.dir / 'config.json'} is new on this machine:\n  {shown(p.export_command())}",
+              file=sys.stderr)
     if not (sys.stdin.isatty() and sys.stderr.isatty()):
         die("not approved; run `archplan trust` in a terminal after reading the command")
     sys.stderr.write("Run it, and allow the agent and the editor to run it from now on? [y/N] ")
@@ -114,6 +133,8 @@ def cmd_trust(a):
 
 def cmd_export(a):
     p = project(a)
+    if not p.export_command():
+        die("no export command; set \"export\" in .archplan/config.json (see `archplan exporters`)")
     confirm_trust(p)
     print(f"running: {shown(p.export_command())}", file=sys.stderr)
     t = time.monotonic()
@@ -309,8 +330,15 @@ def cmd_profile(a):
     p = project(a)
     arch = architecture.Architecture(p)
     try:
-        if a.action == "infer":
-            proposal, saved = arch.infer()
+        if a.action == "list":
+            from . import frameworks
+            model = arch.model()
+            res = frameworks.listing(model, architecture.source_files(model, p.root), p.root, p.dir)
+            return print(json.dumps(res, indent=2) if a.json else frameworks.listing_text(res))
+        if a.action == "use" and not a.name:
+            die("name a profile: archplan profile use <name> (see archplan profile list)")
+        if a.action in ("infer", "use"):
+            proposal, saved = arch.use(a.name) if a.action == "use" else arch.infer()
             print(f"proposed a profile ({proposal['source']}): "
                   + (f"saved to {arch.path.relative_to(p.root)}" if saved
                      else "not saved, the profile is locked in; showing the locked one"), file=sys.stderr)
@@ -332,9 +360,11 @@ def cmd_check(a):
     except ProjectError as e:
         die(str(e), 2)
     if a.export:
-        if not p.trusted():
+        ok, changed = p.trust_state()
+        if not ok:
             if not (sys.stdin.isatty() and sys.stderr.isatty()):
-                die("the export command is not approved on this machine; run `archplan trust` in a terminal, "
+                die("the export command is not approved on this machine" + changed_note(changed)
+                    + "; run `archplan trust` in a terminal, "
                     "or run the exporter yourself before `archplan check`", 2)
             confirm_trust(p)
         print(f"running: {shown(p.export_command() or '')}", file=sys.stderr)
@@ -344,6 +374,7 @@ def cmd_check(a):
             die(str(e), 2)
     try:
         f = findings.Findings(p)
+        f.execute = True  # external detectors run here, not in the editor
         if a.update_baseline:
             r = f.update_baseline()
             print(f"baseline: {r['added']} accepted, {r['removed']} removed, {r['total']} in "
@@ -363,6 +394,103 @@ def cmd_check(a):
     else:
         print(findings.text(lst, a.all))
     sys.exit(1 if new else 0)
+
+
+def cmd_detectors(a):
+    """List the detectors, switch one on or off, approve or run one."""
+    from . import detectors
+    from .detectors import external
+    p = project(a)
+    reg, _ = detectors.registry(p)
+    if a.action != "list":
+        if not a.id:
+            die(f"usage: archplan detectors {a.action} <id>")
+        if a.id not in reg:
+            die(f"no detector {a.id}; see `archplan detectors`")
+    if a.action in ("enable", "disable"):
+        detectors.configure(p, a.id, enabled=a.action == "enable")
+        return print(f"{a.id}: {a.action}d in {p.path('config.json').relative_to(p.root)}")
+    if a.action == "trust":
+        spec = reg[a.id]
+        ok, changed = external.trust_state(p.root, spec)
+        if ok:
+            return print(f"{a.id}: nothing to approve")
+        if changed:
+            print(f"The command of detector {a.id} ({spec['file']}) was approved, but files it runs changed since:\n  "
+                  + "\n  ".join(shown(f) for f in changed) + f"\nCommand:\n  {shown(spec['command'])}",
+                  file=sys.stderr)
+        else:
+            print(f"The command of detector {a.id} ({spec['file']}) is new on this machine:\n  {shown(spec['command'])}",
+                  file=sys.stderr)
+        if not (sys.stdin.isatty() and sys.stderr.isatty()):
+            die("not approved; run `archplan detectors trust` in a terminal after reading the command")
+        sys.stderr.write("Allow archplan to run it from now on? [y/N] ")
+        sys.stderr.flush()
+        if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+            die("not approved")
+        external.trust(p.root, spec)
+        return print(f"approved: {shown(spec['command'])}")
+    try:
+        res = detectors.run(p, only={a.id} if a.action == "run" else None, execute=a.action == "run",
+                            include_disabled=a.action == "run")
+    except ProjectError as e:
+        die(str(e))
+    if a.action == "run":
+        if a.json:
+            return print(json.dumps(res, indent=2, ensure_ascii=False))
+        st = res["detectors"][0]
+        for f in res["findings"]:
+            print(f"  {f['strength']:<6}  {f['title']}")
+        for m in res["missing"]:
+            print(f"Not run: {m['reason']}.")
+        return print(f"{a.id}: {plural_findings(st['count'])}" + (f" in {st['seconds']}s" if "seconds" in st else ""),
+                     file=sys.stderr)
+    if a.json:
+        return print(json.dumps({k: res[k] for k in ("detectors", "missing", "capabilities")}, indent=2,
+                                ensure_ascii=False))
+    print(detectors.text(res))
+
+
+def plural_findings(n: int) -> str:
+    return f"{n} finding{'' if n == 1 else 's'}"
+
+
+def cmd_schema(a):
+    """Show the model's schema section. --refresh rebuilds it from the sources
+    in the repository; --sqlite and --postgres read a live database, only when
+    asked."""
+    from . import schema
+    from .schema import live
+    p = project(a)
+    model = read_json(p.model_path)
+    if not model:
+        die("no model yet; run `archplan export` first")
+    snapshot = None
+    try:
+        if a.sqlite:
+            path = Path(a.sqlite)
+            snapshot = {"kind": "sqlite", **live.sqlite(path)}
+            try:
+                snapshot["path"] = path.resolve().relative_to(p.root).as_posix()
+            except ValueError:
+                snapshot["path"] = path.name
+        elif a.postgres:
+            if not a.url_env:
+                die("--postgres needs --url-env VAR: the environment variable that holds the database URL")
+            snapshot = {"kind": "postgres", **live.postgres(a.url_env)}
+    except live.LiveError as e:
+        die(str(e))
+    if a.drop_live:
+        p.path(schema.LIVE).unlink(missing_ok=True)
+    sch = model.get("schema")
+    if snapshot is not None or a.refresh or a.drop_live or not sch:
+        sch = schema.enrich(p, live=snapshot, force=True)
+    if not sch:
+        die("no database schema found: no Django models, Ecto schemas, db/schema.rb, schema.prisma, schema.sql or "
+            "structure.sql (or use --sqlite FILE, or --postgres --url-env VAR)")
+    if a.json:
+        return print(json.dumps(sch, indent=2, ensure_ascii=False))
+    print(schema.text(sch, a.action))
 
 
 def cmd_glossary(a):
@@ -385,6 +513,49 @@ def cmd_glossary(a):
     print(f"{res['n_components']} components, {res['took_ms']} ms", file=sys.stderr)
 
 
+def cmd_exporters(a):
+    from . import exporters
+    root = Path(a.root or find_root() or ".").resolve()
+    res = exporters.survey(root, root / ".archplan")
+    print(json.dumps(res, indent=2) if a.json else exporters.text(res))
+
+
+def cmd_export_check(a):
+    """Exit 0 when the model follows the exporter contract, 1 when not, 2 when it cannot be read."""
+    from . import modelcheck
+    try:
+        m = json.loads(Path(a.file).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        die(f"cannot read {a.file}: {e}", 2)
+    res = modelcheck.check(m, Path(a.root) if a.root else None)
+    print(json.dumps(res, indent=2) if a.json else modelcheck.text(res))
+    sys.exit(0 if res["ok"] else 1)
+
+
+def cmd_export_lite(a):
+    from .liteexport import LANGS, export
+    root = Path(a.root or ".").resolve()
+    if not root.is_dir():
+        die(f"no folder {root}", 2)
+    cwd = Path.cwd().resolve()
+    rel_to = cwd if root == cwd or cwd in root.parents else root  # paths relative to the repository root
+    langs = [x for x in (a.language or [])]
+    bad = [x for x in langs if x not in set(LANGS.values())]
+    if bad:
+        die(f"unknown language: {', '.join(bad)} (known: {', '.join(sorted(set(LANGS.values())))})", 2)
+    write_model(export(root, a.tests, langs or None, rel_to), a.output)
+
+
+def write_model(m: dict, output: str | None) -> None:
+    text = json.dumps(m, indent=2, ensure_ascii=False) + "\n"
+    if output:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_text(text)
+        print(f"{output}: " + ", ".join(f"{v} {k}" for k, v in counts(m).items()), file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+
+
 def cmd_export_python(a):
     from .pyexport import export
     root = Path(a.root or ".").resolve()
@@ -398,6 +569,25 @@ def cmd_export_python(a):
         sys.stdout.write(text)
 
 
+def cmd_export_ts(a):
+    """Run the shipped Node exporter. It loads the project's own typescript package."""
+    import shutil
+    node = shutil.which("node")
+    if not node:
+        die("export-ts needs Node.js (node on the PATH); install it, then run npm install in the project")
+    script = Path(__file__).resolve().parent / "ts" / "archplan_export.mjs"
+    args = [node, str(script), "-C", a.C]
+    if a.output:
+        args += ["-o", a.output]
+    if a.root:
+        args += ["--root", a.root]
+    if a.depth:
+        args += ["--depth", str(a.depth)]
+    if a.tests:
+        args.append("--tests")
+    sys.exit(subprocess.run(args).returncode)
+
+
 INTRO = """\
 archplan: plan an architecture change in a browser editor, then let an agent build it.
 
@@ -406,7 +596,7 @@ becomes a plan. You and the agent discuss any component, type, dependency or
 call in comment threads.
 
 Start, in the repository root:
-  archplan init      set up .archplan/ (picks an exporter for Go or Python)
+  archplan init      set up .archplan/ (picks an exporter for Go, Python, Elixir or TypeScript)
   archplan export    read the code into .archplan/model.archmodel.json
   archplan up        open the editor (press ? there for help)
 
@@ -477,7 +667,8 @@ def main(argv=None):
     s.add_argument("--interval", type=float, default=2)
     add("hook", cmd_hook, "Claude Code hook (reads the hook event on stdin)")
     s = add("profile", cmd_profile, "show or infer the architecture profile (roles, rules, breaks)")
-    s.add_argument("action", nargs="?", choices=["show", "infer"], default="show")
+    s.add_argument("action", nargs="?", choices=["show", "infer", "list", "use"], default="show")
+    s.add_argument("name", nargs="?", help="for use: a profile name from `archplan profile list`, or inferred")
     s.add_argument("--json", action="store_true", help="the profile and the full analysis as JSON")
     s = add("check", cmd_check, "list new findings (exit 1 when there are any), for CI")
     s.add_argument("--json", action="store_true", help="findings, counts and missing kinds as JSON")
@@ -487,6 +678,19 @@ def main(argv=None):
     s.add_argument("--update-baseline", action="store_true",
                    help="accept every current finding into .archplan/baseline.json (reason: baseline)")
     s.add_argument("--export", action="store_true", help="run the export command first")
+    s = add("detectors", cmd_detectors, "list the detectors; enable, disable, trust or run one")
+    s.add_argument("action", nargs="?", choices=["list", "enable", "disable", "trust", "run"], default="list")
+    s.add_argument("id", nargs="?", help="a detector id, such as concepts.data_clump")
+    s.add_argument("--json", action="store_true")
+    s = add("schema", cmd_schema, "database tables, their owners and who reads or writes them")
+    s.add_argument("action", nargs="?", choices=["show", "tables"], default="show")
+    s.add_argument("--json", action="store_true", help="the schema section as JSON")
+    s.add_argument("--refresh", action="store_true", help="read the schema sources again (no export)")
+    s.add_argument("--sqlite", metavar="FILE", help="read the tables from this SQLite database (read-only)")
+    s.add_argument("--postgres", action="store_true", help="read the tables from PostgreSQL with psql")
+    s.add_argument("--url-env", metavar="VAR", help="the environment variable that holds the PostgreSQL URL; "
+                                                    "the URL is never stored or printed")
+    s.add_argument("--drop-live", action="store_true", help="forget the last --sqlite or --postgres result")
     s = add("glossary", cmd_glossary, "candidate glossary terms per component (tf-idf over the code)")
     s.add_argument("action", choices=["candidates"])
     s.add_argument("--component", help="one component (default: the top terms of every component)")
@@ -496,6 +700,19 @@ def main(argv=None):
     s.add_argument("--since", type=int, default=365, metavar="DAYS", help="days of history (default: 365)")
     s.add_argument("--json", action="store_true", help="the full analysis as JSON")
     s.add_argument("--refresh", action="store_true", help="ignore the cache in .archplan/hotspots.json")
+    s = add("exporters", cmd_exporters, "list the exporters, which match this repository and which are installed")
+    s.add_argument("root", nargs="?", help="repository root (default: the project root, or .)")
+    s.add_argument("--json", action="store_true")
+    s = add("export-check", cmd_export_check, "check an archmodel file against the exporter contract")
+    s.add_argument("file")
+    s.add_argument("--root", help="repository root, to also catch paths that leave it through links")
+    s.add_argument("--json", action="store_true")
+    s = add("export-lite", cmd_export_lite, "export an approximate model for Java, Kotlin, Scala, C#, PHP, Ruby, "
+                                            "Rust or Swift (regex-based)")
+    s.add_argument("root", nargs="?")
+    s.add_argument("-o", "--output")
+    s.add_argument("--language", action="append", help="only this language (repeatable; default: all found)")
+    s.add_argument("--tests", action="store_true", help="include test folders and test files")
     s = add("export-python", cmd_export_python, "export a Python project's as-is model")
     s.add_argument("root", nargs="?")
     s.add_argument("-o", "--output")
@@ -503,6 +720,12 @@ def main(argv=None):
     s.add_argument("--granularity", choices=["auto", "package", "module"], default="auto",
                    help="one component per package or per module (auto: modules when there are fewer than 3 packages)")
     s.add_argument("--tests", action="store_true", help="include test packages and test_*.py files")
+    s = add("export-ts", cmd_export_ts, "export a TypeScript or JavaScript project's as-is model (needs node)")
+    s.add_argument("-C", default=".", metavar="DIR", help="the project directory, with package.json (default: .)")
+    s.add_argument("-o", "--output")
+    s.add_argument("--root", help="directory the model's paths are relative to (default: .)")
+    s.add_argument("--depth", type=int, help="how deep components nest under src (default: 3)")
+    s.add_argument("--tests", action="store_true", help="count test files in dependencies and types")
 
     add("help", cmd_help, "how to get started")
     a = ap.parse_args(argv)

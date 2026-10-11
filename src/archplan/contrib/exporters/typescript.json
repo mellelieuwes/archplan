@@ -1,0 +1,58 @@
+{
+  "name": "typescript",
+  "title": "TypeScript and JavaScript (TypeScript compiler API)",
+  "languages": [
+    "typescript",
+    "javascript"
+  ],
+  "priority": 50,
+  "detect": {
+    "manifests": {
+      "package.json": []
+    },
+    "subdirs": true,
+    "files": [
+      "tsconfig.json",
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs",
+      "**/*.vue",
+      "**/*.svelte"
+    ],
+    "weight": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs",
+      "**/*.vue",
+      "**/*.svelte"
+    ]
+  },
+  "command": "archplan export-ts{chdir} -o {out}",
+  "check": {
+    "programs": [
+      "node"
+    ],
+    "files": [
+      "node_modules/typescript/package.json"
+    ]
+  },
+  "capabilities": [
+    "components",
+    "types",
+    "fields",
+    "deps",
+    "files"
+  ],
+  "install": "Install Node.js, then run npm install in the project: archplan uses the project's own typescript package.",
+  "runs_repo_code": true
+}

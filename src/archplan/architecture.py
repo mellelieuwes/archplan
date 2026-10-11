@@ -13,7 +13,7 @@ breaks it. File-level edges come from the model's `files` section.
 Profile:
 
   {"version": 1, "status": "proposed" | "locked", "name", "source",
-   "units": [{"kind", "glob", "require"?: [names], "exclude"?: [patterns]}],
+   "units": [{"kind", "glob", "require"?: [names], "exclude"?: [patterns], "except"?: [folder globs]}],
    "roles": [{"id", "name", "patterns", "color", "description"}],
    "rules": [{"id", "text", "type": "calls", "from", "to", "allow", "scope"}
              | {"id", "text", "type": "pair", "role", "needs", "match"}],
@@ -142,6 +142,8 @@ def units(profile: dict, files: list) -> list:
         req = spec.get("require") or []
         for d in sorted(dirs):
             if d in found or not glob_match(d, spec.get("glob", "")):
+                continue
+            if any(glob_match(d, x) for x in spec.get("except") or []):
                 continue
             if req and not any(r in children[d] for r in req):
                 continue
@@ -373,13 +375,33 @@ def singular(word: str) -> str:
     return w[:1].upper() + w[1:] if w else "Unit"
 
 
-def infer(model: dict, root: Path | None = None) -> dict:
-    """A proposed profile: the Django profile when the code looks like Django,
-    else one inferred from recurring folder and file-name shapes."""
+def infer(model: dict, root: Path | None = None, project_dir: Path | None = None) -> dict:
+    """A proposed profile: the best framework profile that matches the code
+    (contrib/profiles, or the project's .archplan/profiles), unless the
+    profile inferred from recurring folder and file-name shapes fits much
+    better; else that inferred profile."""
+    from . import frameworks
     files = source_files(model, root)
-    if is_django(files):
-        return django(model, files)
-    return generic(model, files)
+    fw = frameworks.matches(model, files, root, project_dir)
+    try:
+        gen = generic(model, files)
+    except ArchitectureError:
+        if not fw:
+            raise
+        gen = None
+    return frameworks.choose(fw, gen, files) or gen
+
+
+def use(model: dict, name: str, root: Path | None = None, project_dir: Path | None = None) -> dict:
+    """The proposal of one named framework profile, or "inferred"."""
+    from . import frameworks
+    files = source_files(model, root)
+    if name == "inferred":
+        return generic(model, files)
+    ts, _ = frameworks.load(project_dir)
+    if name not in ts:
+        raise ArchitectureError(f"no profile named {name}; see `archplan profile list`")
+    return frameworks.apply(ts[name], model, files)
 
 
 def generic(model: dict, files: list) -> dict:
@@ -556,57 +578,6 @@ def infer_layers(model: dict) -> list:
     return [{"name": g, "components": sorted(c for c in comps if group[c] == g)} for g in order]
 
 
-# ---------- Django ----------
-
-def is_django(files: list) -> bool:
-    apps = sum(1 for f in files if f.endswith("/apps.py"))
-    settings = any(f.endswith("/settings.py") or "/settings/" in f for f in files)
-    return apps >= 2 or (apps >= 1 and settings)
-
-
-DJANGO_ROLES = [
-    ("models", ["models.py", "models/**"]),
-    ("views", ["views.py", "views/**"]),
-    ("forms", ["forms.py", "forms/**"]),
-    ("urls", ["urls.py", "api/urls.py"]),
-    ("admin", ["admin.py", "admin/**"]),
-    ("serializers", ["serializers.py", "serializers/**", "api/serializers.py", "api/serializers/**"]),
-    ("viewsets", ["viewsets.py", "viewsets/**", "api/viewsets.py", "api/viewsets/**", "api/views.py", "api.py"]),
-    ("filters", ["filters.py", "api/filters.py", "filters/**"]),
-    ("signals", ["signals.py", "signals/**", "receivers.py"]),
-    ("tasks", ["tasks.py", "tasks/**"]),
-    ("services", ["services.py", "services/**"]),
-    ("managers", ["managers.py", "querysets.py", "query.py", "models/managers.py", "models/query.py"]),
-    ("templatetags", ["templatetags/**"]),
-    ("commands", ["management/commands/**"]),
-    ("validators", ["validators.py", "api/validators.py", "validators/**"]),
-    ("permissions", ["permissions.py", "api/permissions.py"]),
-]
-DJANGO_RULES = [
-    {"id": "models-stay-low", "type": "calls", "from": "models",
-     "to": ["views", "forms", "admin", "serializers", "urls", "viewsets"], "allow": False, "scope": "any",
-     "text": "Models do not import views, viewsets, forms, admin, serializers or urls"},
-    {"id": "apps-keep-views-private", "type": "calls", "from": "other-units", "to": ["views", "admin", "urls"],
-     "allow": False, "scope": "other-units", "text": "Other apps do not import an app's views, admin or urls"},
-    {"id": "serializers-not-views", "type": "calls", "from": "serializers", "to": ["views", "viewsets"], "allow": False,
-     "scope": "any", "text": "Serializers do not import views or viewsets"},
-]
-
-
-def django(model: dict, files: list) -> dict:
-    apps = sorted({f.rsplit("/", 1)[0] for f in files if f.endswith("/apps.py")}
-                  | {f.rsplit("/", 1)[0] for f in files if f.endswith("/models.py")})
-    base = os.path.commonpath(apps) if apps else ""
-    if base in apps:
-        base = base.rsplit("/", 1)[0] if "/" in base else ""
-    roles = [{"id": k, "name": NAMES.get(k, k.capitalize()), "patterns": p, "color": COLORS[i % len(COLORS)],
-              "description": "Django " + NAMES.get(k, k).lower()} for i, (k, p) in enumerate(DJANGO_ROLES)]
-    return {"version": 1, "status": "proposed", "name": "Django apps", "source": "django", "inferred": stamp(),
-            "units": [{"kind": "App", "glob": (base + "/**") if base else "**",
-                       "require": ["apps.py", "models.py", "models/"], "exclude": ["migrations/**", "tests/**"]}],
-            "roles": roles, "rules": [dict(r) for r in DJANGO_RULES], "layers": infer_layers(model)}
-
-
 # ---------- the project's profile ----------
 
 # The profile is committed repo data, so colours are checked before they reach SVG markup.
@@ -635,6 +606,8 @@ def validate(profile) -> dict:
     for r in profile.get("roles", []):
         if not isinstance(r.get("patterns", []), list):
             raise ValueError(f"role {r['id']}: patterns must be a list")
+        if not all(isinstance(x, str) and 0 < len(x) <= 200 for x in r.get("patterns", [])):
+            raise ValueError(f"role {r['id']}: patterns must be strings of at most 200 characters")
         if "color" in r and not COLOR.fullmatch(str(r["color"])):
             raise ValueError(f"role {r['id']}: color must be a hex colour such as #3b82f6")
     for u in profile.get("units", []):
@@ -692,7 +665,12 @@ class Architecture:
 
     def infer(self) -> tuple:
         """(proposal, saved): the proposal replaces a profile that is not locked."""
-        proposal = infer(self.model(), self.p.root)
+        return self.propose(infer(self.model(), self.p.root, self.p.dir))
+
+    def use(self, name: str) -> tuple:
+        return self.propose(use(self.model(), name, self.p.root, self.p.dir))
+
+    def propose(self, proposal: dict) -> tuple:
         cur = self.profile()
         if cur and cur.get("status") == "locked":
             return proposal, False
@@ -708,7 +686,7 @@ class Architecture:
         prof = self.profile()
         out = {"profile": prof}
         if prof is None:
-            out["proposal"] = infer(model, self.p.root)
+            out["proposal"] = infer(model, self.p.root, self.p.dir)
         out["analysis"] = analyse(prof or out["proposal"], model, self.p.root)
         self._cache = (key, out)
         return out

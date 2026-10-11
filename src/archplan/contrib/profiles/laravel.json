@@ -1,0 +1,187 @@
+{
+  "name": "laravel",
+  "title": "Laravel app",
+  "language": "php",
+  "description": "Laravel: the app/ folder, with roles from its standard subfolders. Only the HTTP layer knows about controllers, requests and middleware.",
+  "detect": {
+    "priority": 50,
+    "any": [
+      {
+        "deps": [
+          "laravel/framework"
+        ],
+        "files": [
+          "**/app/**/*.php"
+        ]
+      },
+      {
+        "files": [
+          "artisan",
+          "app/Http/**/*.php"
+        ]
+      }
+    ]
+  },
+  "units": [
+    {
+      "kind": "App",
+      "glob": "**/app",
+      "require": [
+        "Http/",
+        "Models/",
+        "Providers/"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "controllers",
+      "patterns": [
+        "Http/Controllers/**"
+      ],
+      "name": "Controllers"
+    },
+    {
+      "id": "middleware",
+      "patterns": [
+        "Http/Middleware/**"
+      ],
+      "name": "Middleware"
+    },
+    {
+      "id": "requests",
+      "patterns": [
+        "Http/Requests/**"
+      ],
+      "name": "Form requests"
+    },
+    {
+      "id": "resources",
+      "patterns": [
+        "Http/Resources/**"
+      ],
+      "name": "API resources"
+    },
+    {
+      "id": "models",
+      "patterns": [
+        "Models/**"
+      ],
+      "name": "Models"
+    },
+    {
+      "id": "providers",
+      "patterns": [
+        "Providers/**"
+      ],
+      "name": "Service providers"
+    },
+    {
+      "id": "jobs",
+      "patterns": [
+        "Jobs/**"
+      ],
+      "name": "Jobs"
+    },
+    {
+      "id": "events",
+      "patterns": [
+        "Events/**",
+        "Listeners/**",
+        "Observers/**"
+      ],
+      "name": "Events and listeners"
+    },
+    {
+      "id": "policies",
+      "patterns": [
+        "Policies/**"
+      ],
+      "name": "Policies"
+    },
+    {
+      "id": "console",
+      "patterns": [
+        "Console/**"
+      ],
+      "name": "Console"
+    },
+    {
+      "id": "services",
+      "patterns": [
+        "Services/**",
+        "Actions/**"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "repositories",
+      "patterns": [
+        "Repositories/**"
+      ],
+      "name": "Repositories"
+    },
+    {
+      "id": "enums",
+      "patterns": [
+        "Enums/**",
+        "Casts/**",
+        "ValueObjects/**"
+      ],
+      "name": "Enums and value objects"
+    },
+    {
+      "id": "exceptions",
+      "patterns": [
+        "Exceptions/**"
+      ],
+      "name": "Exceptions"
+    },
+    {
+      "id": "mail",
+      "patterns": [
+        "Mail/**",
+        "Notifications/**"
+      ],
+      "name": "Mail and notifications"
+    }
+  ],
+  "rules": [
+    {
+      "id": "models-stay-low",
+      "type": "calls",
+      "from": "models",
+      "to": [
+        "controllers",
+        "middleware",
+        "requests",
+        "resources"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Models do not use controllers, middleware, requests or resources"
+    },
+    {
+      "id": "http-stays-in-http",
+      "type": "calls",
+      "from": [
+        "models",
+        "jobs",
+        "events",
+        "services",
+        "repositories",
+        "policies",
+        "mail",
+        "console"
+      ],
+      "to": [
+        "controllers",
+        "middleware",
+        "requests"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Code outside the HTTP layer does not use controllers, middleware or form requests"
+    }
+  ]
+}

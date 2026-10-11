@@ -2165,7 +2165,8 @@ function applySel() {
 
 // ---------- sequence (svg) ----------
 function seqData() {
-  const A = asIs.sequences[curSeq], B = toBe.sequences[curSeq];
+  const none = {participants: [], messages: []};
+  const A = asIs.sequences?.[curSeq] || none, B = toBe.sequences?.[curSeq] || none;
   if (mode === 'asis') return {parts: A.participants.map(id => ({id, st: ''})), msgs: A.messages.map(m => ({...m, st: ''}))};
   if (mode === 'tobe') return {parts: B.participants.map(id => ({id, st: ''})), msgs: B.messages.map(m => ({...m, st: ''}))};
   const parts = B.participants.map(id => ({id, st: A.participants.includes(id) ? '' : 'added'}));
@@ -2184,6 +2185,10 @@ function seqData() {
 }
 function renderSeq() { withSugg(renderSeq0); }
 function renderSeq0() {
+  if (!asIs.sequences?.[curSeq] && !toBe.sequences?.[curSeq]) {
+    $('seq').innerHTML = '<p style="padding:16px;color:#64748b">This model has no sequences. The exporter does not record calls.</p>';
+    return;
+  }
   const {parts, msgs} = seqData();
   const colW = 196, x0 = 124, top = 24, hdrH = 44, rowH = msgs.length > 40 ? 30 : 50, y0 = top + hdrH + 40;
   const W = x0 + (parts.length - 1) * colW + 140, H = y0 + msgs.length * rowH + 30;
@@ -3044,7 +3049,7 @@ const roleColor = (r, i) => /^#[0-9a-fA-F]{3,8}$/.test(r?.color || '') ? r.color
 const unitBreaks = id => { const u = unitById(id), has = p => !!p && (u?.files || []).some(f => f.path === p); return (archAn().rules || []).flatMap(r => (r.breaks || []).filter(b => b.unit === id || has(b.from) || has(b.to)).map(b => ({...b, rule: r.id, text: r.text}))); };
 const samePath = (a, b) => !!a && !!b && (a === b || a.endsWith('/' + b) || b.endsWith('/' + a));
 const unitOfFile = p => archUnits().find(u => (u.files || []).some(f => f.path === p)) || archUnits().filter(u => u.path && p.startsWith(u.path)).sort((a, b) => b.path.length - a.path.length)[0];
-const baseName = p => (p || '').split('/').pop();
+const baseName = p => String(p || '').split('/').pop();
 const unitName = u => !u ? '' : u.component ? cname(toBe, u.component) : baseName(u.id);
 const unitNameOf = id => unitById(id) ? unitName(unitById(id)) : baseName(id);
 const trunc = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
@@ -3300,9 +3305,9 @@ Object.assign(actions, {
 // baseline of accepted and dismissed ones. Without that endpoint the mode stays hidden.
 let FIND = null, findGroup = 'all', findBase = false, findDis = null, findOn = null;
 let FHI = {nodes: new Set(), edges: new Set()};
-const FGROUPS = [['profile', 'Profile'], ['structure', 'Structure'], ['layers', 'Layers'], ['vocabulary', 'Vocabulary'], ['types', 'Types'], ['history', 'History']];
-const FCOL = {profile: ['var(--rem)', 'var(--rem-ink)'], structure: ['var(--chg)', 'var(--warn-ink)'], layers: ['var(--acc)', 'var(--sel-ink)'], vocabulary: ['var(--agent)', 'var(--agent-ink)'], types: ['var(--mute)', 'var(--ink)'], history: ['var(--mute)', 'var(--ink)']};
-const FKIND = {'profile.rule': 'call rule', 'profile.pair': 'missing pair', 'structure.cycle': 'cycle', 'layers.upward': 'upward dependency', 'vocabulary.leak': 'leak', 'vocabulary.synonyms': 'synonyms', 'types.fields': 'field clusters', 'types.synonyms': 'synonyms', 'history.coupling': 'changes together'};
+const FGROUPS = [['profile', 'Profile'], ['structure', 'Structure'], ['layers', 'Layers'], ['vocabulary', 'Vocabulary'], ['types', 'Types'], ['history', 'History'], ['concepts', 'Concepts'], ['boundaries', 'Boundaries'], ['data', 'Data'], ['evolution', 'Evolution']];
+const FCOL = {profile: ['var(--rem)', 'var(--rem-ink)'], structure: ['var(--chg)', 'var(--warn-ink)'], layers: ['var(--acc)', 'var(--sel-ink)'], vocabulary: ['var(--agent)', 'var(--agent-ink)'], types: ['var(--mute)', 'var(--ink)'], history: ['var(--mute)', 'var(--ink)'], concepts: ['var(--agent)', 'var(--agent-ink)'], boundaries: ['var(--acc)', 'var(--sel-ink)'], data: ['var(--mute)', 'var(--ink)'], evolution: ['var(--mute)', 'var(--ink)']};
+const FKIND = {'profile.rule': 'call rule', 'profile.pair': 'missing pair', 'structure.cycle': 'cycle', 'structure.tangle': 'tangle', 'layers.upward': 'upward dependency', 'vocabulary.leak': 'leak', 'vocabulary.synonyms': 'synonyms', 'types.fields': 'field clusters', 'types.synonyms': 'synonyms', 'history.coupling': 'changes together'};
 const FLDBG = ['#fef3c7', '#e0e7ff', '#dcfce7', '#fce7f3', '#e0f2fe', '#f1f5f9'];
 const findings = () => FIND?.findings || [];
 const findById = id => findings().find(f => f.id === id);
@@ -3333,13 +3338,21 @@ function evShort(v) {
   if (typeof v === 'object') { const s = Object.entries(v).map(([k, x]) => `${k}: ${evShort(x)}`).join(', '); return s.length > 140 ? s.slice(0, 139) + '…' : s; }
   return String(v);
 }
+// Evidence comes from detectors, some of them the repository's own: any field may
+// have any JSON type, so every branch checks the shape before it maps a list.
+const objs = x => Array.isArray(x) ? x.filter(v => v && typeof v === 'object' && !Array.isArray(v)) : [];
 function evHTML(f, full) {
-  let e = f.evidence || {}; const k = f.kind || '', N = full ? 12 : 4;
-  if (k === 'profile.rule' && e.breaks) return `<ul class="fev">${e.breaks.slice(0, N).map(b => fileTo(b.from, b.to)).join('')}${more(e.breaks.length, N)}</ul>`;
-  if (k === 'profile.pair' && e.missing) return `<ul class="fev">${e.missing.slice(0, N).map(m => `<li><span class="mono">${esc(baseName(m.file))}</span> <span class="mute">needs ${esc(m.needs)}</span></li>`).join('')}${more(e.missing.length, N)}</ul>`;
-  if (k === 'structure.cycle' && e.cycle) {
-    const c = e.cycle, cut = e.cut;
+  let e = f.evidence && typeof f.evidence === 'object' && !Array.isArray(f.evidence) ? f.evidence : {};
+  const k = f.kind || '', N = full ? 12 : 4;
+  if (k === 'profile.rule' && Array.isArray(e.breaks)) { const bs = objs(e.breaks); return `<ul class="fev">${bs.slice(0, N).map(b => fileTo(b.from, b.to)).join('')}${more(bs.length, N)}</ul>`; }
+  if (k === 'profile.pair' && Array.isArray(e.missing)) return `<ul class="fev">${objs(e.missing).slice(0, N).map(m => `<li><span class="mono">${esc(baseName(m.file))}</span> <span class="mute">needs ${esc(m.needs)}</span></li>`).join('')}${more(e.missing.length, N)}</ul>`;
+  if (k === 'structure.cycle' && Array.isArray(e.cycle) && e.cycle.length) {
+    const c = e.cycle, cut = e.cut && typeof e.cut === 'object' ? e.cut : null;
     return `${full || !/→/.test(f.title || '') ? `<div><b>${c.map(cn).map(esc).join(' → ')} → ${esc(cn(c[0]))}</b></div>` : ''}${cut ? `<div class="mute fsm">Cheapest cut: ${esc(cn(cut.from))} → ${esc(cn(cut.to))}${cut.weight != null ? `, ${plural(cut.weight, 'reference')}` : ''}.</div>` : ''}`;
+  }
+  if (k === 'structure.tangle' && e.hub) {
+    const cuts = objs(e.cuts);
+    return `<div class="mute fsm">Hub ${esc(cn(e.hub))}, ${plural(e.size || 0, 'component')}.</div><ul class="fev">${cuts.slice(0, 5).map(c => `<li>${esc(cn(c.from))} → ${esc(cn(c.to))} <span class="mute">(${plural(c.weight || 0, 'ref')})</span></li>`).join('')}</ul>${e.cut_count != null ? `<div class="mute fsm">Breaks all cycles: ${plural(e.cut_count, 'cut')}, ${plural(e.cut_weight || 0, 'ref')}.</div>` : ''}`;
   }
   if (k === 'layers.upward') {
     const ed = Array.isArray(e.edges) ? e.edges : [];
@@ -3347,18 +3360,22 @@ function evHTML(f, full) {
   }
   if (k === 'types.fields' && (e.groups || e.flags)) {
     // The server sends groups as {prefix: [fields]} and flags as booleans; both shapes are accepted.
-    const gs = Array.isArray(e.groups) ? e.groups : Object.entries(e.groups || {}).map(([prefix, fields]) => ({prefix, fields}));
+    const gs = Array.isArray(e.groups) ? objs(e.groups) : e.groups && typeof e.groups === 'object' ? Object.entries(e.groups).map(([prefix, fields]) => ({prefix, fields})) : [];
     if (e.booleans == null && e.flags) e = {...e, booleans: e.flags};
-    return `<div>${gs.map((g, i) => full && Array.isArray(g.fields) ? g.fields.map(x => fld(typeof x === 'string' ? x : x.name, i)).join('') : fld(`${g.prefix}* ×${Array.isArray(g.fields) ? g.fields.length : esc(g.fields ?? g.count ?? '?')}`, i)).join('')}${e.booleans ? ` <span class="mute fsm">· ${plural(Array.isArray(e.booleans) ? e.booleans.length : e.booleans, 'boolean flag')}</span>` : ''}</div>`;
+    return `<div>${gs.map((g, i) => full && Array.isArray(g.fields) ? g.fields.map(x => fld(typeof x === 'string' ? x : x?.name, i)).join('') : fld(`${g.prefix}* ×${Array.isArray(g.fields) ? g.fields.length : esc(g.fields ?? g.count ?? '?')}`, i)).join('')}${e.booleans ? ` <span class="mute fsm">· ${plural(Array.isArray(e.booleans) ? e.booleans.length : e.booleans, 'boolean flag')}</span>` : ''}</div>`;
   }
-  if (/synonyms$/.test(k) && (e.types || e.shared)) {
+  if (k === 'types.synonyms' && (Array.isArray(e.types) || Array.isArray(e.shared))) {
     const sh = Array.isArray(e.shared) ? e.shared : [];
-    return `<div>${(e.types || []).map(t => `<span class="fld" style="background:var(--soft)">${esc(tn(t))}</span>`).join('')}</div>${sh.length ? `<div class="mute fsm">Shared: ${esc(sh.slice(0, full ? 30 : 6).join(', '))}${sh.length > (full ? 30 : 6) ? ', …' : ''}</div>` : ''}`;
+    return `<div>${(Array.isArray(e.types) ? e.types : []).map(t => `<span class="fld" style="background:var(--soft)">${esc(tn(t))}</span>`).join('')}</div>${sh.length ? `<div class="mute fsm">Shared: ${esc(sh.slice(0, full ? 30 : 6).join(', '))}${sh.length > (full ? 30 : 6) ? ', …' : ''}</div>` : ''}`;
   }
   if (k === 'history.coupling' && e.count == null && e.together != null) e = {...e, count: e.together};
   if (k === 'history.coupling' && (e.count != null || e.degree != null)) return `<div class="mute fsm">${e.count != null ? `Changed together in ${plural(e.count, 'commit')}` : ''}${e.degree != null ? `${e.count != null ? ', ' : ''}${typeof e.degree === 'number' && e.degree <= 1 ? Math.round(e.degree * 100) + '%' : esc(e.degree)} of the time` : ''}.</div>`;
-  const kv = Object.entries(e).filter(([, v]) => v != null && v !== '');
-  return kv.length ? `<div class="fkv">${kv.slice(0, full ? 20 : 5).map(([a, v]) => `<span class="mute">${esc(a.replace(/_/g, ' '))}</span> ${esc(evShort(v))}`).join('<br>')}</div>` : '';
+  // Any other kind: the detail line and the suggested moves on the card; the raw evidence only in full.
+  const mv = Array.isArray(e.moves) ? e.moves.filter(m => typeof m === 'string') : [];
+  const mvH = mv.length ? `<ul class="fev">${mv.slice(0, full ? 5 : 2).map(m => `<li>${esc(m)}</li>`).join('')}</ul>` : '';
+  if (!full) return `${f.detail ? `<div class="fsm" style="color:var(--mute)">${esc(f.detail)}</div>` : ''}${mvH}`;
+  const kv = Object.entries(e).filter(([a, v]) => a !== 'moves' && v != null && v !== '');
+  return `${kv.length ? `<div class="fkv">${kv.slice(0, 20).map(([a, v]) => `<span class="mute">${esc(a.replace(/_/g, ' '))}</span> ${esc(evShort(v))}`).join('<br>')}</div>` : ''}${mvH}`;
 }
 function findCard(f) {
   const ev = evHTML(f);  // the evidence repeats the detail text, so show the detail only without it
@@ -3388,14 +3405,17 @@ function findPage() {
     <div class="row fsm" style="margin:0 0 10px"><span class="mute">Baseline: ${nA} accepted · ${nD} dismissed</span>${nA + nD ? `<button class="linkb" data-act="find.base">${findBase ? 'Hide them' : 'Show them'}</button>` : ''}</div>
     ${list.map(findCard).join('') || `<div class="empty">${all.length ? 'No findings here.' : 'No findings. The code passes every check.'}</div>`}`;
 }
-// Show a finding in the diagram: a unit in the Roles view, a cycle with its
+// Show a finding in the diagram: a unit in the Roles view, a cycle or tangle with its
 // edges, or else its components in the Components view.
 function focusFinding(f) {
   findOn = f.id; FHI = {nodes: new Set(), edges: new Set()};
-  const files = [...new Set([...(f.files || []), ...((f.evidence?.breaks || []).flatMap(b => [b.from, b.to])), ...((f.evidence?.missing || []).map(m => m.file))])].filter(Boolean);
+  const ev = f.evidence && typeof f.evidence === 'object' ? f.evidence : {};
+  const files = [...new Set([...(Array.isArray(f.files) ? f.files : []), ...objs(ev.breaks).flatMap(b => [b.from, b.to]), ...objs(ev.missing).map(m => m.file)])].filter(x => typeof x === 'string' && x);
   if (f.unit && unitById(f.unit)) { showUnit(f.unit, {from: files[0] || null, to: null, files}); return renderSide(); }
-  const cyc = f.kind === 'structure.cycle' ? f.evidence?.cycle || [] : [];
-  const comps = [...new Set([...(f.components || []), ...cyc])].filter(c => toBe.components[c] || asIs.components[c]);
+  const cyc = f.kind === 'structure.cycle' && Array.isArray(ev.cycle) ? ev.cycle : [];
+  const tng = f.kind === 'structure.tangle' ? ev : {};
+  objs(tng.cuts).forEach(c => FHI.edges.add(`${c.from}->${c.to}`));
+  const comps = [...new Set([...(Array.isArray(f.components) ? f.components : []), ...cyc, ...(Array.isArray(tng.members) ? tng.members : [])])].filter(c => toBe.components[c] || asIs.components[c]);
   cyc.forEach((c, i) => FHI.edges.add(`${c}->${cyc[(i + 1) % cyc.length]}`));
   comps.forEach(c => FHI.nodes.add(c));
   if (!comps.length) { renderSide(); return toast('This finding names no component in the model.'); }
@@ -3609,6 +3629,7 @@ function refCard(s) {
     <div class="ref-t">${esc(s.title || 'Refactor')}</div>
     ${s.rationale ? `<div class="note">${md(s.rationale)}</div>` : s.note ? `<div class="note">${md(s.note)}</div>` : ''}
     ${nFix ? `<div class="ref-fx"><span class="mute fsm">Fixes ${plural(nFix, 'finding')}${ver.length && claimed.length ? ` (${ver.length} verified)` : ver.length ? ', verified' : ', not verified'}</span>${ver.map(id => fchip(id, true)).join('')}${claimed.map(id => fchip(id, false)).join('')}</div>` : ''}
+    ${(s.verified?.shrunk || []).map(x => `<div class="ref-fx"><span class="mute fsm">Shrinks tangle from ${esc(x.from)} to ${esc(x.to)}</span>${fchip(x.id, false).replace(/title="[^"]*"/, 'title="Verified: the tangle is smaller in the preview"')}</div>`).join('')}
     ${intro.length ? `<div class="ref-in">Introduces ${intro.map(t => `<b>${esc(t)}</b>`).join(', ')}</div>` : ''}
     ${shown.map(o => { const i = ops.indexOf(o), [k, c, t, sub] = opLine(o); return `<label class="sop"><input type="checkbox" data-sug="${esc(s.id)}" data-i="${i}"${P.has(i) ? ' checked' : ''}><span class="k k-${c}">${esc(k)}</span><span>${esc(t)}${sub ? `<span class="sub">${esc(sub.length > 240 ? sub.slice(0, 239) + '…' : sub)}</span>` : ''}</span></label>`; }).join('')}
     ${ops.length > 4 ? `<button class="linkb fsm" data-act="ref.more" data-id="${esc(s.id)}">${AUTO.more.has(s.id) ? 'Show fewer changes' : `Show all ${ops.length} changes`}</button>` : ''}

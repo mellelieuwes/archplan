@@ -1,0 +1,206 @@
+{
+  "name": "aspnetcore",
+  "title": "ASP.NET Core",
+  "language": "csharp",
+  "description": "ASP.NET Core: one unit per project with a Program.cs or Startup.cs. Layers follow the Clean Architecture project names (Web or Api, Infrastructure, Application, Domain) when they are used.",
+  "detect": {
+    "priority": 40,
+    "deps": [
+      "Microsoft.AspNetCore"
+    ],
+    "files": [
+      "**/*.cs"
+    ]
+  },
+  "units": [
+    {
+      "kind": "Project",
+      "glob": "**",
+      "require": [
+        "Program.cs",
+        "Startup.cs"
+      ],
+      "exclude": [
+        "bin/**",
+        "obj/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "controllers",
+      "patterns": [
+        "Controllers/**",
+        "*Controller.cs"
+      ],
+      "name": "Controllers"
+    },
+    {
+      "id": "pages",
+      "patterns": [
+        "Pages/**",
+        "Components/**",
+        "*PageModel.cs"
+      ],
+      "name": "Pages"
+    },
+    {
+      "id": "endpoints",
+      "patterns": [
+        "Endpoints/**",
+        "*Endpoints.cs",
+        "*Endpoint.cs"
+      ],
+      "name": "Endpoints"
+    },
+    {
+      "id": "models",
+      "patterns": [
+        "Models/**",
+        "Entities/**",
+        "Domain/**"
+      ],
+      "name": "Models"
+    },
+    {
+      "id": "dtos",
+      "patterns": [
+        "Dtos/**",
+        "DTOs/**",
+        "Contracts/**",
+        "*Dto.cs",
+        "*Request.cs",
+        "*Response.cs"
+      ],
+      "name": "DTOs"
+    },
+    {
+      "id": "services",
+      "patterns": [
+        "Services/**",
+        "*Service.cs"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "data",
+      "patterns": [
+        "Data/**",
+        "Repositories/**",
+        "Persistence/**",
+        "Migrations/**",
+        "*DbContext.cs",
+        "*Repository.cs"
+      ],
+      "name": "Data access"
+    },
+    {
+      "id": "middleware",
+      "patterns": [
+        "Middleware/**",
+        "*Middleware.cs"
+      ],
+      "name": "Middleware"
+    },
+    {
+      "id": "hubs",
+      "patterns": [
+        "Hubs/**",
+        "*Hub.cs"
+      ],
+      "name": "SignalR hubs"
+    },
+    {
+      "id": "startup",
+      "patterns": [
+        "Program.cs",
+        "Startup.cs"
+      ],
+      "name": "Startup"
+    }
+  ],
+  "rules": [
+    {
+      "id": "models-stay-low",
+      "type": "calls",
+      "from": "models",
+      "to": [
+        "controllers",
+        "pages",
+        "endpoints",
+        "services",
+        "data"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Models do not use controllers, pages, services or data access"
+    },
+    {
+      "id": "no-calls-into-controllers",
+      "type": "calls",
+      "from": [
+        "services",
+        "data",
+        "models",
+        "dtos"
+      ],
+      "to": [
+        "controllers",
+        "pages",
+        "endpoints"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Services and data access do not call controllers, pages or endpoints"
+    },
+    {
+      "id": "data-not-services",
+      "type": "calls",
+      "from": "data",
+      "to": "services",
+      "allow": false,
+      "scope": "any",
+      "text": "Data access does not call services"
+    }
+  ],
+  "layers": [
+    {
+      "name": "Presentation",
+      "match": [
+        "*.Web",
+        "*.Web.*",
+        "*.Api",
+        "*.Api.*",
+        "*.WebApi",
+        "*.WebApi.*",
+        "*.Server",
+        "*.Server.*"
+      ]
+    },
+    {
+      "name": "Infrastructure",
+      "match": [
+        "*.Infrastructure",
+        "*.Infrastructure.*",
+        "*.Persistence",
+        "*.Persistence.*"
+      ]
+    },
+    {
+      "name": "Application",
+      "match": [
+        "*.Application",
+        "*.Application.*"
+      ]
+    },
+    {
+      "name": "Domain",
+      "match": [
+        "*.Domain",
+        "*.Domain.*",
+        "*.Core",
+        "*.Core.*"
+      ]
+    }
+  ]
+}

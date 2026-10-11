@@ -60,6 +60,7 @@
           "from": { "type": "string" },
           "to": { "type": "string" },
           "weight": { "type": "integer", "minimum": 1 },
+          "typeOnly": { "type": "integer", "minimum": 0 },
           "evidence": { "type": "array", "items": { "type": "string" } }
         }
       }
@@ -171,6 +172,35 @@
             }
           }
         }
+      }
+    },
+    "schema": {
+      "type": "object",
+      "description": "Database tables, their owner components and who reads or writes them.",
+      "properties": {
+        "sources": {"type": "array", "items": {"type": "object", "required": ["kind"],
+          "properties": {"kind": {"enum": ["django", "ecto", "rails", "prisma", "sql", "sqlite", "postgres"]},
+            "path": {"type": "string"}}}},
+        "tables": {"type": "object", "additionalProperties": {"type": "object",
+          "properties": {
+            "columns": {"type": "array", "items": {"type": "object", "required": ["name", "type", "null"],
+              "properties": {"name": {"type": "string"}, "type": {"type": "string"}, "null": {"type": "boolean"},
+                "default": {"type": "string"}, "values": {"type": "array", "items": {"type": "string"}}}}},
+            "pk": {"type": "array", "items": {"type": "string"}},
+            "fks": {"type": "array", "items": {"type": "object", "required": ["columns", "to"],
+              "properties": {"columns": {"type": "array", "items": {"type": "string"}}, "to": {"type": "string"},
+                "to_columns": {"type": "array", "items": {"type": "string"}}, "on_delete": {"type": "string"}}}},
+            "indexes": {"type": "array", "items": {"type": "object", "required": ["columns", "unique"],
+              "properties": {"columns": {"type": "array", "items": {"type": "string"}}, "unique": {"type": "boolean"}}}},
+            "checks": {"type": "array", "items": {"type": "string"}},
+            "comment": {"type": "string"}}}},
+        "enums": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
+        "maps": {"type": "object", "additionalProperties": {"type": "object",
+          "properties": {"type": {"type": "string"}, "component": {"type": "string"}, "via": {"type": "string"}}}},
+        "access": {"type": "array", "items": {"type": "object", "required": ["component", "table", "mode"],
+          "properties": {"component": {"type": "string"}, "table": {"type": "string"},
+            "mode": {"enum": ["read", "write", "orm"]}, "weight": {"type": "integer"},
+            "evidence": {"type": "array", "items": {"type": "string"}}}}}
       }
     },
     "vocabulary": {

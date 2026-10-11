@@ -1,0 +1,147 @@
+{
+  "name": "nestjs",
+  "title": "NestJS modules",
+  "language": "typescript",
+  "description": "NestJS: one unit per module folder under src/. Controllers call services; other modules import a module and its services, not its controllers.",
+  "detect": {
+    "priority": 60,
+    "deps": [
+      "@nestjs/core"
+    ],
+    "files": [
+      "**/src/**"
+    ]
+  },
+  "units": [
+    {
+      "kind": "Module",
+      "glob": "**/src/*",
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    {
+      "kind": "Module",
+      "glob": "**/src/modules/*",
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "module",
+      "patterns": [
+        "*.module.ts"
+      ],
+      "name": "Modules"
+    },
+    {
+      "id": "controller",
+      "patterns": [
+        "*.controller.ts",
+        "*.resolver.ts",
+        "*.gateway.ts"
+      ],
+      "name": "Controllers"
+    },
+    {
+      "id": "service",
+      "patterns": [
+        "*.service.ts",
+        "*.provider.ts"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "repository",
+      "patterns": [
+        "*.repository.ts"
+      ],
+      "name": "Repositories"
+    },
+    {
+      "id": "entity",
+      "patterns": [
+        "*.entity.ts",
+        "*.schema.ts",
+        "entities/**"
+      ],
+      "name": "Entities"
+    },
+    {
+      "id": "dto",
+      "patterns": [
+        "*.dto.ts",
+        "dto/**",
+        "dtos/**"
+      ],
+      "name": "DTOs"
+    },
+    {
+      "id": "guard",
+      "patterns": [
+        "*.guard.ts",
+        "*.interceptor.ts",
+        "*.middleware.ts",
+        "*.pipe.ts",
+        "*.filter.ts",
+        "*.strategy.ts"
+      ],
+      "name": "Guards and middleware"
+    }
+  ],
+  "rules": [
+    {
+      "id": "services-not-controllers",
+      "type": "calls",
+      "from": [
+        "service",
+        "repository",
+        "guard"
+      ],
+      "to": "controller",
+      "allow": false,
+      "scope": "any",
+      "text": "Services, repositories and guards do not import controllers"
+    },
+    {
+      "id": "entities-plain",
+      "type": "calls",
+      "from": [
+        "entity",
+        "dto"
+      ],
+      "to": [
+        "controller",
+        "service",
+        "module",
+        "repository"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Entities and DTOs import no controllers, services, repositories or modules"
+    },
+    {
+      "id": "controllers-private",
+      "type": "calls",
+      "from": "other-units",
+      "to": "controller",
+      "allow": false,
+      "scope": "other-units",
+      "text": "Other modules do not import a module's controllers"
+    }
+  ]
+}

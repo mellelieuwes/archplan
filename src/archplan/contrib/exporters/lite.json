@@ -1,0 +1,57 @@
+{
+  "name": "lite",
+  "title": "Lite (regex-based, approximate)",
+  "languages": [
+    "java",
+    "kotlin",
+    "scala",
+    "csharp",
+    "php",
+    "ruby",
+    "rust",
+    "swift"
+  ],
+  "priority": 10,
+  "detect": {
+    "subdirs": true,
+    "files": [
+      "pom.xml",
+      "build.gradle",
+      "build.gradle.kts",
+      "*.csproj",
+      "*.sln",
+      "Gemfile",
+      "composer.json",
+      "Cargo.toml",
+      "Package.swift",
+      "build.sbt",
+      "**/*.java",
+      "**/*.kt",
+      "**/*.scala",
+      "**/*.cs",
+      "**/*.php",
+      "**/*.rb",
+      "**/*.rs",
+      "**/*.swift"
+    ],
+    "weight": [
+      "**/*.java",
+      "**/*.kt",
+      "**/*.scala",
+      "**/*.cs",
+      "**/*.php",
+      "**/*.rb",
+      "**/*.rs",
+      "**/*.swift"
+    ]
+  },
+  "command": "archplan export-lite {root} -o {out}",
+  "capabilities": [
+    "components",
+    "types",
+    "fields",
+    "deps",
+    "files"
+  ],
+  "install": "Built in. For more precise models, add a compiler-based exporter (see format/exporter-plugins.md)."
+}

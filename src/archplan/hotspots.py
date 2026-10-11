@@ -18,14 +18,17 @@ from itertools import combinations
 from pathlib import Path
 
 from .project import Project, ProjectError, etag, read_json, write_json
+from .safeio import GIT_SAFE
 
 MAX_COMMITS = 3000
 MAX_FILES = 50  # a commit that touches more files is a bulk change: skipped
 MIN_TOGETHER = 3
 MIN_DEGREE = 0.3
 MAX_PAIRS = 200
+MAX_OWNERS = 30  # authors kept per component, with their commit counts, for the ownership detector
+VERSION = 2      # of the cached result: 2 added owners
 
-SAFE = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "log.showSignature=false"]
+SAFE = GIT_SAFE
 
 
 class NotGit(ProjectError):
@@ -146,7 +149,7 @@ def analyse(commits: list, model: dict, prefix: str | None = None, hint: str = "
     used = [c for c in commits if len(c[3]) <= max_files]
     if prefix is None:
         prefix = best_prefix({f for c in used for f in c[3]}, mapper, hint)
-    n_commits, authors, files, last = Counter(), defaultdict(set), defaultdict(set), {}
+    n_commits, authors, files, last = Counter(), defaultdict(Counter), defaultdict(set), {}
     together, unmapped = Counter(), set()
     for sha, email, date, paths in used:
         comps = set()
@@ -159,7 +162,7 @@ def analyse(commits: list, model: dict, prefix: str | None = None, hint: str = "
             files[cid].add(f)
         for cid in comps:
             n_commits[cid] += 1
-            authors[cid].add(email)
+            authors[cid][email] += 1
             last.setdefault(cid, date)  # newest first
         together.update(combinations(sorted(comps), 2))
     deps = {(d["from"], d["to"]) for d in model.get("dependencies") or []}
@@ -174,7 +177,8 @@ def analyse(commits: list, model: dict, prefix: str | None = None, hint: str = "
             "prefix": prefix,
             "components": {cid: {"commits": n, "authors": len(authors[cid]), "files": len(files[cid]),
                                  "last": last[cid]} for cid, n in n_commits.most_common()},
-            "pairs": pairs[:max_pairs]}
+            "pairs": pairs[:max_pairs],
+            "owners": {cid: dict(authors[cid].most_common(MAX_OWNERS)) for cid in n_commits}}
 
 
 def hotspots(p: Project, since_days: int = 365, refresh: bool = False, **kw) -> dict:
@@ -183,7 +187,7 @@ def hotspots(p: Project, since_days: int = 365, refresh: bool = False, **kw) -> 
     outside a git repository."""
     top = toplevel(p.root)
     head = git(top, "rev-parse", "HEAD").strip()
-    key = {"head": head, "since_days": int(since_days), "model": etag(p.model_path),
+    key = {"v": VERSION, "head": head, "since_days": int(since_days), "model": etag(p.model_path),
            **{k: kw[k] for k in sorted(kw)}}
     cache = p.path("hotspots.json")
     old = read_json(cache) or {}

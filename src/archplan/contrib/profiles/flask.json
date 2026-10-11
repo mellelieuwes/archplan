@@ -1,0 +1,112 @@
+{
+  "name": "flask",
+  "title": "Flask blueprints",
+  "language": "python",
+  "description": "Flask: one unit per blueprint package (a folder with routes.py or views.py).",
+  "detect": {
+    "priority": 40,
+    "deps": [
+      "flask"
+    ],
+    "files": [
+      "**/*.py"
+    ]
+  },
+  "units": [
+    {
+      "kind": "Blueprint",
+      "glob": "**",
+      "require": [
+        "routes.py",
+        "views.py",
+        "views/"
+      ],
+      "exclude": [
+        "tests/**",
+        "test/**",
+        "**/test_*.py",
+        "**/*_test.py",
+        "conftest.py"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "routes",
+      "patterns": [
+        "routes.py",
+        "views.py",
+        "views/**"
+      ],
+      "name": "Routes"
+    },
+    {
+      "id": "forms",
+      "patterns": [
+        "forms.py",
+        "forms/**"
+      ],
+      "name": "Forms"
+    },
+    {
+      "id": "models",
+      "patterns": [
+        "models.py",
+        "models/**"
+      ],
+      "name": "Models"
+    },
+    {
+      "id": "services",
+      "patterns": [
+        "services.py",
+        "services/**"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "schemas",
+      "patterns": [
+        "schemas.py",
+        "schemas/**"
+      ],
+      "name": "Schemas"
+    }
+  ],
+  "rules": [
+    {
+      "id": "models-stay-low",
+      "type": "calls",
+      "from": "models",
+      "to": [
+        "routes",
+        "forms",
+        "services"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Models do not import routes, forms or services"
+    },
+    {
+      "id": "services-not-routes",
+      "type": "calls",
+      "from": "services",
+      "to": [
+        "routes",
+        "forms"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Services do not import routes or forms"
+    },
+    {
+      "id": "blueprints-private",
+      "type": "calls",
+      "from": "other-units",
+      "to": "routes",
+      "allow": false,
+      "scope": "other-units",
+      "text": "Other blueprints do not import a blueprint's routes"
+    }
+  ]
+}

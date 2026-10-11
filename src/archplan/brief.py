@@ -21,18 +21,19 @@ import time
 from collections import defaultdict
 
 from .findings import (EXAMPLES, Findings, comp_name, cycle_findings, graph, layer_findings,
-                       policy_findings)
+                       policy_findings, sccs)
 from .handover import lock
 from .model import edited
-from .project import Project, etag, read_json, write_json
+from .project import Project, append_ignore, etag, read_json, write_json
 from .store import JsonStore, NotFound, Store, find, stamp, who_next
 from .suggestions import Suggestions
 
 SEVERITY = {"strong": 3.0, "medium": 2.0, "weak": 1.0}
-KIND_WEIGHT = {"structure.cycle": 1.5, "layers.policy": 1.4, "layers.upward": 1.2, "profile.rule": 1.0,
+KIND_WEIGHT = {"structure.tangle": 1.6, "structure.cycle": 1.5, "layers.policy": 1.4, "layers.upward": 1.2, "profile.rule": 1.0,
                "history.coupling": 1.0, "vocabulary.leak": 0.8, "types.fields": 0.8, "types.synonyms": 0.7,
                "profile.pair": 0.5, "hotspot": 0.6, "vocabulary.misplaced": 0.6}
-VERIFIED_KINDS = ("structure.cycle", "layers.upward", "layers.policy")
+VERIFIED_KINDS = ("structure.cycle", "structure.tangle", "layers.upward", "layers.policy")
+TANGLE_KEYS = 5         # a tangle's cheapest cuts group the findings on those edges with it
 EFFORTS = ("S", "M", "L")
 RISKS = ("low", "med", "high")
 HOTSPOTS = 3            # churn-only opportunities at most
@@ -95,10 +96,19 @@ def profile_of(p: Project) -> dict:
 
 
 def model_findings(m: dict, prof: dict) -> tuple:
-    """({id: finding}, edges): the findings computed from the model alone."""
+    """({id: finding}, edges, {component: its SCC}): the findings computed
+    from the model alone."""
     eff = effective(m)
     fs = cycle_findings(eff) + layer_findings(prof, eff) + policy_findings(eff, m)
-    return {f["id"]: f for f in fs}, set(graph(eff))
+    edges = set(graph(eff))
+    scc = {c: frozenset(s) for s in sccs({x for e in edges for x in e}, edges) for c in s}
+    return {f["id"]: f for f in fs}, edges, scc
+
+
+def remnant(f: dict, scc: dict) -> frozenset:
+    """The largest SCC that the members of tangle f fall into on the other side."""
+    parts = [scc.get(c, frozenset([c])) for c in f["evidence"]["members"]]
+    return max(parts, key=lambda s: (len(s), sorted(s)), default=frozenset())
 
 
 def ring_edges(f: dict) -> list:
@@ -113,8 +123,8 @@ def verify(p: Project, ops: list, fixes: list, before: dict | None = None) -> di
     before = before if before is not None else p.target_or_model()
     after, _ = edited(p, ops)
     prof = profile_of(p)
-    b, b_edges = model_findings(before, prof)
-    a, a_edges = model_findings(after, prof)
+    b, b_edges, b_scc = model_findings(before, prof)
+    a, a_edges, a_scc = model_findings(after, prof)
     asis = {}
     if any(i not in b for i in fixes):
         try:
@@ -122,19 +132,36 @@ def verify(p: Project, ops: list, fixes: list, before: dict | None = None) -> di
         except Exception:
             asis = {}
 
+    shrunk = []
+
     def gone(f):
         if f["kind"] == "structure.cycle":
             return any(e not in a_edges for e in ring_edges(f))
+        if f["kind"] == "structure.tangle":
+            rest = len(remnant(f, a_scc))
+            if rest <= 1:
+                return True
+            if rest < f["evidence"]["size"]:
+                shrunk.append({"id": f["id"], "from": f["evidence"]["size"], "to": rest})
+            return False
         return f["id"] not in a
+
+    def new(f):
+        if f["kind"] == "structure.cycle":
+            return any(e not in b_edges for e in ring_edges(f))
+        if f["kind"] == "structure.tangle":  # new unless most of it was one SCC before
+            return len(remnant(f, b_scc) & set(f["evidence"]["members"])) * 2 < f["evidence"]["size"]
+        return f["id"] not in b
     fixed = [i for i, f in b.items() if gone(f)]
     for i in fixes:
         if i not in b and i in asis and kind_of(i) in VERIFIED_KINDS and gone(asis[i]):
             fixed.append(i)
-    introduced = [f["title"] for i, f in a.items()
-                  if (any(e not in b_edges for e in ring_edges(f)) if f["kind"] == "structure.cycle" else i not in b)]
+    introduced = [f["title"] for f in a.values() if new(f)]
+    done = set(fixed) | {x["id"] for x in shrunk}
     return {"fixed": list(dict.fromkeys(fixed))[:EXAMPLES], "introduced": introduced[:EXAMPLES],
+            "shrunk": list({x["id"]: x for x in shrunk}.values())[:EXAMPLES],
             "claimed": [i for i in fixes if kind_of(i) not in VERIFIED_KINDS],
-            "unverified": [i for i in fixes if kind_of(i) in VERIFIED_KINDS and i not in fixed]}
+            "unverified": [i for i in fixes if kind_of(i) in VERIFIED_KINDS and i not in done]}
 
 
 # ---------- opportunities ----------
@@ -145,6 +172,8 @@ def pair_keys(f: dict) -> list:
     if k == "structure.cycle":
         cut = ev.get("cut") or {}
         return [tuple(sorted((cut["from"], cut["to"])))] if cut else []
+    if k == "structure.tangle":
+        return [tuple(sorted((c["from"], c["to"]))) for c in (ev.get("cuts") or [])[:TANGLE_KEYS]]
     if k == "layers.upward":
         if "from" in ev:  # the first target only: more would chain unrelated groups together
             return [tuple(sorted((ev["from"], ev["to"][0])))] if ev.get("to") else []
@@ -190,6 +219,9 @@ def severity(f: dict) -> float:
 def group_key(fs: list) -> str:
     """Stable while the group's main finding stays: its cycle, its pair, or its id."""
     for f in fs:
+        if f["kind"] == "structure.tangle":
+            return "tangle:" + f["evidence"]["hub"]
+    for f in fs:
         if f["kind"] == "structure.cycle":
             return "cycle:" + "|".join(sorted(f["evidence"]["cycle"]))
     keys = sorted(k for f in fs for k in pair_keys(f))
@@ -228,6 +260,14 @@ def moves(f: dict, model: dict) -> list:
             out.append(f"Extract what {n(a)} uses of {n(b)} into a new component both may depend on "
                        "(add_component, move_type).")
         return out[:3]
+    if k == "structure.tangle":
+        out = []
+        for c in (ev.get("cuts") or [])[:3]:
+            a, b = c["from"], c["to"]
+            site = f" ({c['evidence'][0]})" if c.get("evidence") else ""
+            out.append(f"Cut {n(a)} → {n(b)}, {c['weight']} reference{'s' if c['weight'] != 1 else ''}{site}: "
+                       f"invert it or move what {n(a)} uses into {n(a)}; remove_dependency {a} → {b}.")
+        return out
     if k == "layers.upward":
         if "from" not in ev:
             return [f"Reconsider the layer order: {ev.get('from_layer')} may belong above {ev.get('to_layer')} "
@@ -283,7 +323,7 @@ def moves(f: dict, model: dict) -> list:
         c, t = f["components"][0], ev.get("type")
         return [f"Move {tn(t)} to {n(c)}, which uses the word most (move_type).",
                 f"Or rename the term in {n(c)} if it means something else there."]
-    return []
+    return [m for m in ev.get("moves") or [] if isinstance(m, str)][:3]  # detectors may suggest their own
 
 
 def facts(f: dict, model: dict) -> dict:
@@ -293,6 +333,11 @@ def facts(f: dict, model: dict) -> dict:
         cut = ev["cut"]
         return {"cycle": ev["cycle"], "cut": f"{cut['from']} → {cut['to']}", "cut_weight": cut["weight"],
                 "sites": cut.get("evidence", [])[:3], "tangle": ev.get("tangle")}
+    if k == "structure.tangle":
+        return {"hub": ev["hub"], "size": ev["size"], "cycles": ev.get("cycles"),
+                "cuts": [f"{c['from']} → {c['to']} ({c['weight']})" for c in (ev.get("cuts") or [])[:5]],
+                "breaks_all": f"{ev.get('cut_count')} cuts, {ev.get('cut_weight')} references",
+                "two_cycles": [f"{x['a']} ↔ {x['b']} {x['weights']}" for x in (ev.get("two_cycles") or [])[:3]]}
     if k == "layers.upward":
         return {x: ev[x] for x in ("from", "to", "weight", "from_layer", "to_layer", "upward", "down") if x in ev} | \
             ({"sites": ev["evidence"][:3]} if ev.get("evidence") else {})
@@ -670,10 +715,4 @@ def auto_tick(p: Project, store: Store | None = None, now: float | None = None, 
 
 
 def ensure_ignored(p: Project) -> None:
-    gi = p.path(".gitignore")
-    try:
-        text = gi.read_text()
-    except OSError:
-        return
-    if STATE not in text.split():
-        gi.write_text(text.rstrip("\n") + "\n" + STATE + "\n")
+    append_ignore(p, STATE)

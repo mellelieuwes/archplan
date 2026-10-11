@@ -33,7 +33,8 @@ from pathlib import Path
 
 from .architecture import source_files
 from .hotspots import Mapper
-from .project import Project, etag, read_json, write_json
+from .project import Project, append_ignore, etag, read_json, write_json
+from .safeio import inside, read_file
 
 CACHE = "vocab-cache.json"
 FILE = "vocabulary.json"
@@ -144,19 +145,26 @@ def keep(w: str) -> bool:
 
 # ---------- channels ----------
 
-_STR_DQ = r'"(?:[^"\\\n]|\\.)*"'
-_STR_SQ = r"'(?:[^'\\\n]|\\.)*'"
-_TRIPLE = r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\''
+# An unclosed string, comment or sigil runs to the end of its line or of the
+# text. Without that, the scanner would scan on from every opening quote:
+# quadratic on hostile input.
+_END = r"\\?(?=\n)|\\?\Z"  # a lone backslash before the end closes too
+_STR_DQ = r'"(?:[^"\\\n]|\\.)*(?:"|' + _END + ")"
+_STR_SQ = r"'(?:[^'\\\n]|\\.)*(?:'|" + _END + ")"
+_TRIPLE = r'"""[\s\S]*?(?:"""|\Z)|\'\'\'[\s\S]*?(?:\'\'\'|\Z)'
+_BLOCK = r"/\*[\s\S]*?(?:\*/|\Z)"
 LANGS = {
     "python": (r"#[^\n]*", "|".join([_TRIPLE, _STR_DQ, _STR_SQ])),
-    "elixir": (r"#[^\n]*", "|".join([r'"""[\s\S]*?"""', _STR_DQ, r"~[a-zA-Z]\([^)\n]*\)", r"~[a-zA-Z]\[[^\]\n]*\]"])),
-    "go": (r"//[^\n]*|/\*[\s\S]*?\*/", "|".join([r"`[^`]*`", _STR_DQ, _STR_SQ])),
-    "js": (r"//[^\n]*|/\*[\s\S]*?\*/", "|".join([r"`(?:[^`\\]|\\.)*`", _STR_DQ, _STR_SQ])),
-    "ruby": (r"#[^\n]*|^=begin[\s\S]*?^=end", "|".join([_STR_DQ, _STR_SQ])),
-    "generic": (r"#[^\n]*|//[^\n]*|/\*[\s\S]*?\*/", "|".join([_STR_DQ, _STR_SQ])),
+    "elixir": (r"#[^\n]*", "|".join([r'"""[\s\S]*?(?:"""|\Z)', _STR_DQ, r"~[a-zA-Z]\([^)\n]*(?:\)|" + _END + ")",
+                                    r"~[a-zA-Z]\[[^\]\n]*(?:\]|" + _END + ")"])),
+    "go": (r"//[^\n]*|" + _BLOCK, "|".join([r"`[^`]*(?:`|\Z)", _STR_DQ, _STR_SQ])),
+    "js": (r"//[^\n]*|" + _BLOCK, "|".join([r"`(?:[^`\\]|\\.)*(?:`|\\?\Z)", _STR_DQ, _STR_SQ])),
+    "ruby": (r"#[^\n]*|^=begin[\s\S]*?(?:^=end|\Z)", "|".join([_STR_DQ, _STR_SQ])),
+    "generic": (r"#[^\n]*|//[^\n]*|" + _BLOCK, "|".join([_STR_DQ, _STR_SQ])),
 }
 EXT = {".py": "python", ".ex": "elixir", ".exs": "elixir", ".heex": "elixir", ".go": "go", ".js": "js", ".jsx": "js",
-       ".ts": "js", ".tsx": "js", ".mjs": "js", ".rb": "ruby"}
+       ".ts": "js", ".tsx": "js", ".mjs": "js", ".cjs": "js", ".mts": "js", ".cts": "js", ".vue": "js",
+       ".svelte": "js", ".rb": "ruby"}
 SCANNERS = {lang: re.compile(f"(?P<c>{c})|(?P<s>{s})", re.M) for lang, (c, s) in LANGS.items()}
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 WORDISH = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
@@ -229,7 +237,8 @@ def lang_of(path: str) -> str:
 def is_test(path: str) -> bool:
     n = path.rsplit("/", 1)[-1]
     return (n.startswith("test_") or n.endswith(("_test.py", "_test.go", "_test.exs", ".test.ts", ".test.js",
-                                                 ".spec.ts", ".spec.js", "_spec.rb", "conftest.py")))
+                                                 ".test.tsx", ".test.jsx", ".spec.ts", ".spec.js", ".spec.tsx",
+                                                 "_spec.rb", "conftest.py")))
 
 
 # ---------- ignore list ----------
@@ -247,20 +256,6 @@ def clean_ignore(d) -> dict:
 
 # ---------- the analysis ----------
 
-
-def inside(root: Path, rel: str) -> Path | None:
-    """root/rel when it stays inside root, symlinks included; None otherwise.
-
-    File lists come from the model, which is repo data, so a path such as
-    ../../etc/passwd or a symlink out of the repo must not be read."""
-    if not rel or rel.startswith("/") or ".." in rel.split("/"):
-        return None
-    fp = root / rel
-    try:
-        fp.resolve().relative_to(root.resolve())
-    except (OSError, ValueError):
-        return None
-    return fp
 
 class Vocab:
     def __init__(self, p: Project):
@@ -307,7 +302,7 @@ class Vocab:
             if fp is None:
                 continue
             try:
-                st = fp.stat()
+                st = fp.lstat()
             except OSError:
                 continue
             tag = f"{st.st_size:x}-{st.st_mtime_ns:x}"
@@ -318,7 +313,7 @@ class Vocab:
             if st.st_size > MAX_FILE:
                 continue
             try:
-                text = fp.read_text(errors="replace")
+                text = read_file(fp, MAX_FILE)
             except OSError:
                 continue
             out[f] = {"e": tag, **scan_text(text, lang_of(f))}
@@ -329,13 +324,7 @@ class Vocab:
         return out
 
     def _gitignore(self):
-        gi = self.p.path(".gitignore")
-        try:
-            text = gi.read_text()
-        except OSError:
-            return
-        if CACHE not in text.split():
-            gi.write_text(text.rstrip("\n") + "\n" + CACHE + "\n")
+        append_ignore(self.p, CACHE)
 
     def files_by_component(self, model: dict) -> dict:
         mapper = Mapper(model.get("components") or {})
@@ -520,7 +509,7 @@ class Vocab:
 
 # ---------- GLOSSARY.md ----------
 
-DEFINITION = re.compile(r"^\s*(?:[-*]\s+)?\*\*([^*]+)\*\*\s*:\s*(.+)$", re.M)
+DEFINITION = re.compile(r"^[ \t]*(?:[-*]\s+)?\*\*([^*]+)\*\*\s*:\s*(.+)$", re.M)
 
 
 def slug(name: str) -> str:
@@ -652,8 +641,8 @@ def vocabulary(p: Project, model: dict, v: Vocab | None = None) -> dict:
         if fp is None:
             continue
         try:
-            text = fp.read_text()
-        except OSError:
+            text = read_file(fp, MAX_FILE, errors="strict")
+        except (OSError, UnicodeDecodeError):
             continue
         rel = fp.relative_to(p.root).as_posix()
         try:
@@ -752,7 +741,7 @@ def usage(p: Project, model: dict, concepts: dict, by_key: dict, v: Vocab) -> li
             if fp is None:
                 continue
             try:
-                text = fp.read_text(errors="replace")
+                text = read_file(fp, MAX_FILE)
             except OSError:
                 continue
             if len(text) > MAX_FILE:

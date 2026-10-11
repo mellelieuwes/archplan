@@ -1,0 +1,158 @@
+{
+  "name": "phoenix",
+  "title": "Phoenix contexts and web",
+  "language": "elixir",
+  "description": "Phoenix 1.3+: lib/<app> holds the contexts, lib/<app>_web the web layer. The web calls contexts, never the Repo; the contexts do not call the web.",
+  "detect": {
+    "priority": 30,
+    "deps": [
+      "phoenix"
+    ],
+    "files": [
+      "**/lib/*_web/**/*.ex"
+    ]
+  },
+  "units": [
+    {
+      "kind": "Web",
+      "glob": "**/lib/*_web"
+    },
+    {
+      "kind": "App",
+      "glob": "**/lib/*",
+      "except": [
+        "**/lib/*_web",
+        "**/lib/mix"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "controllers",
+      "patterns": [
+        "controllers/**",
+        "*_controller.ex"
+      ],
+      "name": "Controllers"
+    },
+    {
+      "id": "live",
+      "patterns": [
+        "live/**",
+        "*_live.ex"
+      ],
+      "name": "LiveViews"
+    },
+    {
+      "id": "components",
+      "patterns": [
+        "components/**",
+        "*_components.ex"
+      ],
+      "name": "Components"
+    },
+    {
+      "id": "html",
+      "patterns": [
+        "*_html.ex",
+        "*_html/**",
+        "templates/**",
+        "*_view.ex"
+      ],
+      "name": "HTML"
+    },
+    {
+      "id": "json",
+      "patterns": [
+        "*_json.ex"
+      ],
+      "name": "JSON views"
+    },
+    {
+      "id": "channels",
+      "patterns": [
+        "channels/**",
+        "*_channel.ex",
+        "*_socket.ex"
+      ],
+      "name": "Channels"
+    },
+    {
+      "id": "router",
+      "patterns": [
+        "router.ex"
+      ],
+      "name": "Router"
+    },
+    {
+      "id": "endpoint",
+      "patterns": [
+        "endpoint.ex"
+      ],
+      "name": "Endpoint"
+    },
+    {
+      "id": "repo",
+      "patterns": [
+        "repo.ex"
+      ],
+      "name": "Repo"
+    },
+    {
+      "id": "application",
+      "patterns": [
+        "application.ex"
+      ],
+      "name": "Application"
+    }
+  ],
+  "rules": [
+    {
+      "id": "web-not-repo",
+      "type": "calls",
+      "from": [
+        "controllers",
+        "live",
+        "components",
+        "html",
+        "json",
+        "channels"
+      ],
+      "to": "repo",
+      "allow": false,
+      "scope": "any",
+      "text": "The web layer calls contexts, not the Repo"
+    },
+    {
+      "id": "contexts-not-web",
+      "type": "calls",
+      "from": "other-units",
+      "to": [
+        "controllers",
+        "live",
+        "components",
+        "html",
+        "json",
+        "router"
+      ],
+      "allow": false,
+      "scope": "other-units",
+      "text": "Other units do not call controllers, LiveViews, components or the router"
+    }
+  ],
+  "layers": [
+    {
+      "name": "Web",
+      "match": [
+        "*Web",
+        "*Web.*"
+      ]
+    },
+    {
+      "name": "Domain",
+      "match": [
+        "*"
+      ]
+    }
+  ]
+}

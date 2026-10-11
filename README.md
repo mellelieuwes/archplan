@@ -113,11 +113,20 @@ In a message, `@[Label](anchor)` mentions a model item, for example
 | `archplan watch` | one line per human comment, plan change or decided suggestion |
 | `archplan hotspots [--since DAYS] [--json]` | components that change most, and pairs that change together without a dependency |
 | `archplan profile [infer\|show] [--json]` | propose an architecture profile, or show how the code conforms to it |
+| `archplan profile list`, `archplan profile use NAME` | the framework profiles that match, with their fit; propose one of them |
 | `archplan check [--format github] [--all] [--update-baseline] [--export] [--json]` | new findings; exit 1 when there are any, 2 on errors |
+| `archplan detectors [--json]` | each detector: group, needs, whether it is on, missing data and its finding count |
+| `archplan detectors enable\|disable\|trust\|run ID [--json]` | switch a detector on or off, approve an external one, or run one |
+| `archplan schema [show\|tables] [--json] [--refresh]` | the database tables, their owner components, and foreign keys across components |
+| `archplan schema --sqlite FILE`, `archplan schema --postgres --url-env VAR` | read the tables from a live database, only when you ask |
 | `archplan glossary candidates [--component ID] [--top N] [--json]` | the words that characterise each component, ranked by tf-idf |
 | `archplan hook` | Claude Code hook: report threads that wait on the agent |
 | `archplan export-python` | the built-in Python exporter |
 | `archplan export-elixir`, `archplan trace-elixir` | the Elixir exporter and test tracer |
+| `archplan export-ts [-C DIR]` | the TypeScript and JavaScript exporter (needs `node`) |
+| `archplan export-lite [DIR] [--language L]` | the regex-based exporter for Java, Kotlin, C#, Ruby, PHP, Rust, Swift and Scala |
+| `archplan exporters [--json]` | the exporters that match this repository, whether they are installed, and install hints |
+| `archplan export-check FILE [--root DIR]` | check a model file against the exporter contract |
 
 ## Hotspots
 
@@ -143,15 +152,22 @@ which roles may call which (`calls`), or that one file needs a partner
 (`pair`, for example `<stem>_view.ex -> <stem>_view_builder.ex`). Layers
 order the components from top to bottom.
 
-`archplan profile infer` proposes a profile. For Django code (a
-`manage.py` or `settings.py`, and apps with `apps.py` and `models.py`) it
-uses a built-in Django profile. Otherwise it looks for file name shapes that
-recur in at least 30% of the units, and keeps the call rules that hold for at
-least 90% of the file references. A proposal never overwrites a locked
+`archplan profile infer` proposes a profile. It first tries the framework
+profiles in [`src/archplan/contrib/profiles`](src/archplan/contrib/profiles):
+Django, FastAPI, Flask, Phoenix, Rails, Laravel, Spring, ASP.NET Core, Go
+(standard and hexagonal layouts), React, Next.js, Angular, Vue, NestJS and
+Express. Each one says which files and manifest dependencies identify the
+framework. When none fits, or the inferred profile fits much better, it looks
+for file name shapes that recur in at least 30% of the units, and keeps the
+call rules that hold for at least 90% of the file references.
+`archplan profile list` shows the matches and their fit, and
+`archplan profile use NAME` proposes one. A project can add or replace
+profiles in `.archplan/profiles/`; see
+[`src/archplan/contrib/README.md`](src/archplan/contrib/README.md). A proposal never overwrites a locked
 profile. `archplan profile` shows the role coverage and the rule breaks.
 
-Rules need the file references in the model's `files` section. The Python
-and Elixir exporters write it.
+Rules need the file references in the model's `files` section. The Python,
+Elixir, TypeScript and lite exporters write it.
 
 ## Findings and `archplan check`
 
@@ -163,13 +179,24 @@ follow it".
 |---|---|
 | `profile.rule` | a unit breaks a calls rule of the architecture profile |
 | `profile.pair` | a unit has files without their partner, such as a view without a view builder |
-| `structure.cycle` | components that depend on each other in a cycle, with the cheapest cut: the dependency with the fewest references |
+| `structure.cycle` | two or three components that depend on each other in a cycle, with the cheapest cut: the dependency with the fewest references |
+| `structure.tangle` | four or more components that all reach each other, as one finding named after the hub. The evidence lists a small set of cuts that breaks every cycle. When the tangle grows past its baselined size, it is new again |
 | `layers.upward` | a component depends on a higher layer of the profile |
 | `layers.policy` | a dependency the target's policy forbids |
 | `vocabulary.leak` | a component uses a term of a concept it should not (needs glossaries) |
 | `types.fields` | a type with 25 or more fields, 3 or more groups of related fields, or 6 or more boolean flags |
 | `types.synonyms` | types in different components that share 70% or more of their field names |
 | `history.coupling` | components that change together without a dependency (from the cached `archplan hotspots`) |
+| `concepts.state_flags` | types that keep their state in 3 or more boolean flags (`is_*`, `has_*`, a flag next to a `*_at` timestamp); one finding per component |
+| `concepts.data_clump` | the same 3 or more field names in types of 2 or more components, such as street, city and zip |
+| `concepts.raw_ids` | fields such as `invoice_id` that hold another component's concept as a plain string or number |
+| `concepts.untyped_bag` | map, dict, `Any`, `interface{}` or JSON fields on types that other components use |
+| `concepts.units_in_names` | one quantity named with different units across components, such as `amount` and `amount_cents` |
+| `concepts.string_enum` | a field compared with several string values across components (needs `literals`) |
+| `concepts.bool_params` | components whose public functions take boolean flags (needs `signatures`) |
+| `boundaries.stability` | components in the zone of pain (stable and concrete) or of uselessness (abstract and unused), from Martin's metrics |
+| `boundaries.unused_public` | files with public types in a component others depend on, which only that component uses (needs `files`) |
+| `evolution.ownership` | components with many active authors and no clear owner, and authors spread over many components (cached hotspots) |
 
 In the editor you discuss a finding, dismiss it with a reason, or accept it
 as is. Accepted and dismissed findings go into `.archplan/baseline.json`.
@@ -189,6 +216,87 @@ step for a Python project:
 `--export` runs the configured export command first. It runs only once a
 person approved that command with `archplan trust`, so in CI run the
 exporter yourself, as above.
+
+### Detectors
+
+Each kind comes from a detector. A detector needs some data in the model,
+such as `fields`, `files`, `signatures` or `literals`, or the cached git
+history. When the data is not there, the detector does not run, and
+`archplan check` says why under "Not checked". `archplan detectors` lists
+every detector with its needs and its finding count.
+
+Switch a detector off, or change its settings, in `.archplan/config.json`:
+
+```json
+"detectors": {
+  "boundaries.unused_public": {"enabled": false},
+  "types.fields": {"params": {"large_type": 40}}
+}
+```
+
+`archplan detectors enable ID` and `archplan detectors disable ID` edit that
+file. The editor uses `GET /api/detectors` and `PUT /api/detectors/ID`. The
+metrics behind `boundaries.stability` (Ca, Ce, I, A, D per component) are at
+`GET /api/metrics`.
+
+An external detector is a command. Put a JSON file in
+`.archplan/detectors/`:
+
+```json
+{"id": "concepts.money", "name": "Money as float", "group": "concepts",
+ "needs": ["fields"], "command": "python3 tools/money.py {ctx}",
+ "params": {"limit": 3}, "timeout": 60}
+```
+
+archplan writes the model, the settings and the files per component to a
+temporary JSON file and puts its path in place of `{ctx}`. The command
+prints `{"findings": [{"key", "title", "detail", "strength", "basis",
+"components", "files", "evidence"}]}`. archplan keeps at most 200 findings,
+shortens long text, drops paths outside the repository and makes each id
+from the detector id and the key. The command comes from the repository, so
+it runs only after a person approves it: `archplan detectors trust ID` in a
+terminal. `archplan check` and `archplan detectors run ID` run it; the
+editor shows the last result.
+
+## Database schema
+
+After an export, archplan adds a `schema` section to the model when it
+finds a database schema in the repository. It needs no database. It reads
+Django models, Ecto schemas and `priv/repo/migrations`, `db/schema.rb`,
+`schema.prisma`, and `schema.sql` or `structure.sql` (also
+`pg_dump --schema-only` output).
+
+Each table gets an owner component: the component of its ORM type, or else
+the component whose code writes it most. archplan also records which
+components use each table through the ORM, which ones write it, and raw SQL
+reads and writes.
+
+`archplan schema` shows the tables per owner and the foreign keys across
+components. `archplan schema tables` lists the columns. The editor reads the
+same data from `GET /api/schema`.
+
+To read a live database instead, ask for it:
+
+- `archplan schema --sqlite app.db` opens the file read-only.
+- `archplan schema --postgres --url-env DATABASE_URL` runs `psql` with the
+  URL from that environment variable. archplan never stores or prints the
+  URL.
+
+The result is kept in `.archplan/schema-live.json`, so later exports keep
+it. `archplan schema --drop-live` forgets it.
+
+The data detectors read the schema:
+
+| Kind | Finds |
+|---|---|
+| `data.shared_table` | a table that two or more components write |
+| `data.cross_fk` | a foreign key from one component's table to another's, with the layer direction when the profile has layers |
+| `data.polymorphic` | type and id column pairs, such as `subject_type` and `subject_id` |
+| `data.json_bag` | JSON columns, weighted by how many components use the table |
+| `data.flag_columns` | three or more boolean or nullable timestamp columns that hold a state |
+| `data.repeated_columns` | the same group of columns in three or more tables |
+| `data.enum_mismatch` | allowed values in the database that differ from the code's enum or literals |
+| `data.orphan_table` | a table without an owner, or without use in the code |
 
 ## Refactor proposals
 
@@ -258,9 +366,36 @@ An exporter writes an [archmodel/1](src/archplan/format/archmodel.md) file.
 - **Elixir** (`mix.exs`, in the root or a subdirectory):
   `archplan export-elixir`, which needs `mix`. `archplan trace-elixir` runs
   tests and records call sequences. See [`exporters/elixir`](exporters/elixir).
+- **TypeScript and JavaScript** (`package.json` with `tsconfig.json` or
+  sources, in the root or a subdirectory such as `frontend/`):
+  `archplan export-ts`, which needs `node` and the project's own `typescript`
+  package, so run `npm install` first. It follows `tsconfig.json`, including
+  `paths` aliases such as `@/`, and reads the `<script>` blocks of Vue and
+  Svelte files. Components are folders under `src`; npm packages are external
+  components. It runs the project's installed `typescript`, so `archplan
+  init` does not approve it: read the command, then run `archplan trust`.
 
-For another language, set `export` in `.archplan/config.json` to any command
-that writes the model file or prints it on stdout.
+The Python, TypeScript and Elixir exporters also list function signatures,
+string literals and enum-like value sets (`signatures`, `literals` and
+`enums` in the [format](src/archplan/format/archmodel.md)). Detectors use
+them to find concepts the code has no type for.
+
+- **Java, Kotlin, C#, Ruby, PHP, Rust, Swift and Scala**: `archplan export-lite`,
+  built in. It reads the source with regular expressions, not a compiler.
+  Components are packages, namespaces or folders. It resolves imports to
+  files (Java and Kotlin packages, C# `using`, PHP `use` with PSR-4, Ruby
+  `require` and Zeitwerk constants, Rust `mod` and `use`) and lists types
+  with simple fields. It misses calls and anything a compiler would infer;
+  see [its limits](src/archplan/format/archmodel.md).
+
+These exporters are entries in a registry,
+[`src/archplan/contrib/exporters`](src/archplan/contrib/exporters).
+`archplan exporters` shows which ones match and which are installed. Any
+program can be an exporter: add an entry in `.archplan/exporters/`, or set
+`export` in `.archplan/config.json`. The contract is in
+[`exporter-plugins.md`](src/archplan/format/exporter-plugins.md), and
+`archplan export-check` tests a model against it. A command from a project
+entry still needs `archplan trust`.
 
 ## Security
 
@@ -271,10 +406,26 @@ that writes the model file or prints it on stdout.
 - The `export` command in `.archplan/config.json` runs in a shell, and a cloned
   repository supplies it. The agent's `refresh_model` and the editor's "From
   code" button run it only after you approved that exact command on this
-  machine: `archplan init` approves the command it writes; for a cloned
-  repository, run `archplan trust` (or `archplan export`, which asks) in a
-  terminal. There is no flag to skip the question, so an agent cannot approve
-  a command. Approvals live in `~/.config/archplan/trusted.json`.
+  machine. `archplan init` approves the command it writes only for the
+  `python` and `lite` exporters, which read the code without running it. The
+  TypeScript, Elixir and Go exporters run code from the repository (its
+  `typescript` package, its `mix.exs`, the go toolchain), so `archplan init`
+  leaves them unapproved and says so. Run `archplan trust` (or `archplan
+  export`, which asks) in a terminal. There is no flag to skip the question,
+  so an agent cannot approve a command. Approvals live in
+  `~/.config/archplan/trusted.json`.
+- An approval also stores a sha256 hash of each repository file the command
+  names as an argument, such as `tools/check.py` in `python3 tools/check.py
+  {ctx}`. This holds for export commands and external detectors. When such a
+  file changes, for example after a `git pull`, the command needs a new
+  approval, and archplan names the changed file.
+- archplan reads repository files as untrusted data. It reads only regular
+  files inside the repository: a symlink, a device or a FIFO is skipped, and
+  so is a file larger than its limit (about 2 MB for source files). Folder
+  walks do not follow symlinked folders. The parsers avoid regular
+  expressions that slow down on hostile input.
+- `archplan schema --sqlite FILE` opens the database read-only, whatever the
+  file name holds.
 - Thread and plan text renders as Markdown without raw HTML; links only open
   http(s) and mailto addresses. The editor's libraries ship with the package.
 

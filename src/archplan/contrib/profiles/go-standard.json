@@ -1,0 +1,174 @@
+{
+  "name": "go-standard",
+  "title": "Go standard layout",
+  "language": "go",
+  "description": "Go with cmd/, internal/ and pkg/: one unit per package folder under them. Commands stay thin; storage and models do not call handlers.",
+  "detect": {
+    "priority": 30,
+    "any": [
+      {
+        "files": [
+          "**/go.mod",
+          "**/cmd/*/*.go"
+        ]
+      },
+      {
+        "files": [
+          "**/go.mod",
+          "**/internal/*/*.go"
+        ]
+      }
+    ]
+  },
+  "units": [
+    {
+      "kind": "Command",
+      "glob": "**/cmd/*",
+      "exclude": [
+        "**/*_test.go",
+        "**/testdata/**"
+      ]
+    },
+    {
+      "kind": "Package",
+      "glob": "**/internal/*",
+      "exclude": [
+        "**/*_test.go",
+        "**/testdata/**"
+      ]
+    },
+    {
+      "kind": "Package",
+      "glob": "**/pkg/*",
+      "exclude": [
+        "**/*_test.go",
+        "**/testdata/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "main",
+      "patterns": [
+        "main.go"
+      ],
+      "name": "Main"
+    },
+    {
+      "id": "handler",
+      "patterns": [
+        "handler.go",
+        "handlers.go",
+        "*_handler.go",
+        "http/**",
+        "handler/**",
+        "handlers/**",
+        "api/**",
+        "grpc/**"
+      ],
+      "name": "Handlers"
+    },
+    {
+      "id": "service",
+      "patterns": [
+        "service.go",
+        "*_service.go",
+        "service/**"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "store",
+      "patterns": [
+        "store.go",
+        "repository.go",
+        "*_store.go",
+        "*_repository.go",
+        "postgres/**",
+        "sql/**",
+        "db/**",
+        "store/**",
+        "repository/**"
+      ],
+      "name": "Storage"
+    },
+    {
+      "id": "model",
+      "patterns": [
+        "model.go",
+        "models.go",
+        "types.go",
+        "model/**",
+        "models/**"
+      ],
+      "name": "Models"
+    }
+  ],
+  "rules": [
+    {
+      "id": "store-not-up",
+      "type": "calls",
+      "from": "store",
+      "to": [
+        "handler",
+        "service",
+        "main"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Storage does not call services or handlers"
+    },
+    {
+      "id": "models-stay-low",
+      "type": "calls",
+      "from": "model",
+      "to": [
+        "handler",
+        "service",
+        "store",
+        "main"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Models do not call handlers, services or storage"
+    },
+    {
+      "id": "services-not-handlers",
+      "type": "calls",
+      "from": "service",
+      "to": [
+        "handler",
+        "main"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Services do not call handlers"
+    }
+  ],
+  "layers": [
+    {
+      "name": "Commands",
+      "match": [
+        "*/cmd/*",
+        "cmd/*",
+        "**/cmd/**"
+      ]
+    },
+    {
+      "name": "Internal",
+      "match": [
+        "*/internal/*",
+        "internal/*",
+        "**/internal/**"
+      ]
+    },
+    {
+      "name": "Public packages",
+      "match": [
+        "*/pkg/*",
+        "pkg/*",
+        "**/pkg/**"
+      ]
+    }
+  ]
+}

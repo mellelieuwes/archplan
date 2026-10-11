@@ -1,0 +1,33 @@
+{
+  "name": "elixir",
+  "title": "Elixir (Mix compiler)",
+  "languages": [
+    "elixir"
+  ],
+  "priority": 60,
+  "detect": {
+    "manifests": {
+      "mix.exs": []
+    },
+    "subdirs": true,
+    "weight": [
+      "lib/**/*.ex"
+    ]
+  },
+  "command": "archplan export-elixir{chdir} -o {out}",
+  "check": {
+    "programs": [
+      "mix"
+    ]
+  },
+  "capabilities": [
+    "components",
+    "types",
+    "fields",
+    "deps",
+    "files",
+    "calls"
+  ],
+  "install": "Install Elixir (https://elixir-lang.org/install.html) and run mix deps.get in the project.",
+  "runs_repo_code": true
+}

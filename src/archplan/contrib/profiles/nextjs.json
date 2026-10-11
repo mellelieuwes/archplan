@@ -1,0 +1,170 @@
+{
+  "name": "nextjs",
+  "title": "Next.js app",
+  "language": "typescript",
+  "description": "Next.js: the app/ route tree (app router) and pages/ (pages router). Pages, layouts and route handlers are entry points that Next.js loads; no other file imports them.",
+  "detect": {
+    "priority": 60,
+    "deps": [
+      "next"
+    ],
+    "files": [
+      "**/*.*"
+    ]
+  },
+  "units": [
+    {
+      "kind": "Route tree",
+      "glob": "**/app",
+      "require": [
+        "layout.tsx",
+        "layout.jsx",
+        "layout.js",
+        "layout.ts"
+      ],
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    {
+      "kind": "Pages",
+      "glob": "**/pages",
+      "require": [
+        "_app.tsx",
+        "_app.jsx",
+        "_app.js",
+        "index.tsx",
+        "index.jsx",
+        "index.js"
+      ],
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    {
+      "kind": "Shared",
+      "glob": "**/components",
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/__mocks__/**",
+        "**/*.stories.*",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "page",
+      "patterns": [
+        "page.tsx",
+        "page.jsx",
+        "page.js",
+        "page.mdx",
+        "*.tsx",
+        "*.jsx"
+      ],
+      "name": "Pages"
+    },
+    {
+      "id": "layout",
+      "patterns": [
+        "layout.tsx",
+        "layout.jsx",
+        "layout.js",
+        "template.tsx",
+        "template.jsx"
+      ],
+      "name": "Layouts"
+    },
+    {
+      "id": "route",
+      "patterns": [
+        "route.ts",
+        "route.js",
+        "api/**"
+      ],
+      "name": "Route handlers"
+    },
+    {
+      "id": "boundary",
+      "patterns": [
+        "loading.tsx",
+        "error.tsx",
+        "not-found.tsx",
+        "global-error.tsx",
+        "loading.jsx",
+        "error.jsx",
+        "_app.tsx",
+        "_document.tsx",
+        "_app.jsx",
+        "_document.jsx"
+      ],
+      "name": "Boundaries"
+    },
+    {
+      "id": "actions",
+      "patterns": [
+        "actions.ts",
+        "*.actions.ts",
+        "**/actions/**"
+      ],
+      "name": "Server actions"
+    },
+    {
+      "id": "components",
+      "patterns": [
+        "**/_components/**",
+        "**/components/**",
+        "*.ts"
+      ],
+      "name": "Components"
+    }
+  ],
+  "rules": [
+    {
+      "id": "entry-points",
+      "type": "calls",
+      "from": "any",
+      "to": [
+        "page",
+        "layout",
+        "route",
+        "boundary"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "No file imports a page, layout or route handler; Next.js loads them"
+    },
+    {
+      "id": "components-not-routes",
+      "type": "calls",
+      "from": [
+        "components",
+        "actions"
+      ],
+      "to": [
+        "page",
+        "layout",
+        "route"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Components and server actions do not import pages, layouts or routes"
+    }
+  ]
+}

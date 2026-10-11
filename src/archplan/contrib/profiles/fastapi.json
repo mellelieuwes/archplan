@@ -1,0 +1,137 @@
+{
+  "name": "fastapi",
+  "title": "FastAPI modules",
+  "language": "python",
+  "description": "FastAPI: one unit per module with a router (router.py, routes.py or a routers/ or api/ folder). Routers call services; schemas and models stay free of web code.",
+  "detect": {
+    "priority": 40,
+    "deps": [
+      "fastapi"
+    ],
+    "files": [
+      "**/*.py"
+    ]
+  },
+  "units": [
+    {
+      "kind": "Module",
+      "glob": "**",
+      "require": [
+        "router.py",
+        "routes.py",
+        "routers/",
+        "api/"
+      ],
+      "exclude": [
+        "tests/**",
+        "test/**",
+        "**/test_*.py",
+        "**/*_test.py",
+        "conftest.py"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "router",
+      "patterns": [
+        "router.py",
+        "routes.py",
+        "routers/**",
+        "api/**",
+        "endpoints/**"
+      ],
+      "name": "Router"
+    },
+    {
+      "id": "schemas",
+      "patterns": [
+        "schemas.py",
+        "schemas/**"
+      ],
+      "name": "Schemas"
+    },
+    {
+      "id": "models",
+      "patterns": [
+        "models.py",
+        "models/**"
+      ],
+      "name": "Models"
+    },
+    {
+      "id": "services",
+      "patterns": [
+        "service.py",
+        "services.py",
+        "services/**",
+        "crud.py",
+        "crud/**"
+      ],
+      "name": "Services"
+    },
+    {
+      "id": "dependencies",
+      "patterns": [
+        "dependencies.py",
+        "deps.py"
+      ],
+      "name": "Dependencies"
+    },
+    {
+      "id": "config",
+      "patterns": [
+        "config.py",
+        "settings.py",
+        "core/config.py"
+      ],
+      "name": "Config"
+    }
+  ],
+  "rules": [
+    {
+      "id": "models-stay-low",
+      "type": "calls",
+      "from": "models",
+      "to": [
+        "router",
+        "services",
+        "dependencies"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Models do not import routers, services or dependencies"
+    },
+    {
+      "id": "schemas-stay-low",
+      "type": "calls",
+      "from": "schemas",
+      "to": [
+        "router",
+        "services",
+        "dependencies"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Schemas do not import routers, services or dependencies"
+    },
+    {
+      "id": "services-not-routers",
+      "type": "calls",
+      "from": "services",
+      "to": "router",
+      "allow": false,
+      "scope": "any",
+      "text": "Services do not import routers"
+    },
+    {
+      "id": "routers-private",
+      "type": "calls",
+      "from": "other-units",
+      "to": "router",
+      "allow": false,
+      "scope": "other-units",
+      "text": "Other modules do not import a module's router"
+    }
+  ]
+}

@@ -24,11 +24,19 @@ Arguments: $ARGUMENTS
 Run `archplan status`. If it says there is no project:
 
 1. `archplan init` in the repository root. It picks an exporter for Go
-   (`go.mod`) and Python (`pyproject.toml`, `setup.py`). For other languages,
-   tell the user that `export` in `.archplan/config.json` must name a command
-   that writes an archmodel/1 file (format: `src/archplan/format/archmodel.md`
-   in this plugin), and stop.
-2. `archplan export`. Report the counts. If it fails, show the error.
+   (`go.mod`), Python (`pyproject.toml`, `setup.py`), Elixir (`mix.exs`) and
+   TypeScript or JavaScript (`package.json`; run `npm install` first, since
+   `archplan export-ts` uses the project's `typescript`). Java, Kotlin, C#,
+   Ruby, PHP, Rust, Swift and Scala get `archplan export-lite`, which is
+   less precise. `archplan exporters` shows the choice and install hints.
+   For other languages, tell the user that `export` in
+   `.archplan/config.json` must name a command that writes an archmodel/1
+   file (`src/archplan/format/exporter-plugins.md` in this plugin), and stop.
+2. `archplan export`. Report the counts. If it fails, show the error. If it
+   says the command is not approved (always the case for the TypeScript,
+   Elixir and Go exporters, which run code from the repository), ask the
+   user to read the command and run `archplan trust` in a terminal. Never
+   try to approve it yourself.
 3. Ask whether `.archplan/` should be committed. Committing it shares the
    target, plan and threads with the team; `server.json` and logs stay
    ignored.
@@ -97,7 +105,9 @@ same in a terminal.
 ### Findings
 
 `get_findings` lists what archplan notices: profile rule breaks, dependency
-cycles with the cheapest cut, upward layer dependencies, glossary leaks,
+cycles with the cheapest cut, tangles (one finding for four or more
+components that all reach each other, with cuts that break every cycle),
+upward layer dependencies, glossary leaks,
 large types, types that look like synonyms, and hidden coupling. By default
 it lists the new ones, those the human has not accepted or dismissed.
 `get_item("finding:<id>")` gives the full evidence.
@@ -112,6 +122,20 @@ it lists the new ones, those the human has not accepted or dismissed.
 
 `archplan check` prints the new findings in a terminal and exits with 1 when
 there are any. In CI, use `archplan check --format github`.
+
+Detectors make the findings. `archplan detectors` lists them, with the data
+each one needs and what is missing. When a detector cannot run, tell the
+human what would make it work (for example `archplan hotspots`), but do not
+switch detectors on or off, and never run `archplan detectors trust`: a
+person approves an external detector's command.
+
+When the repository has a database schema (Django models, Ecto schemas,
+`db/schema.rb`, `schema.prisma`, `schema.sql` or `structure.sql`), the model
+has a `schema` section and the `data.*` detectors run: tables written by
+several components, foreign keys across components, JSON columns, flag
+columns and more. `archplan schema` shows the tables per owner. Never read a
+live database on your own: `--sqlite` and `--postgres` are for the human to
+ask for.
 
 ### Glossaries
 
@@ -210,5 +234,8 @@ progress.
 | `archplan threads --waiting agent` | threads that wait on you, as text |
 | `archplan hotspots` | hotspots and hidden coupling from the git history |
 | `archplan profile` | the architecture profile and its rule breaks |
+| `archplan profile list` | the framework profiles that match, with their fit |
 | `archplan check` | new findings; exit 1 when there are any |
+| `archplan detectors` | the detectors, their needs, missing data and finding counts |
+| `archplan schema [tables]` | database tables, their owners, and foreign keys across components |
 | `archplan glossary candidates` | glossary candidate terms per component |

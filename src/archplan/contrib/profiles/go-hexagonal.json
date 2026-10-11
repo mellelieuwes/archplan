@@ -1,0 +1,112 @@
+{
+  "name": "go-hexagonal",
+  "title": "Go hexagonal (ports and adapters)",
+  "language": "go",
+  "description": "Go with domain, ports and adapters folders: the domain depends on nothing, adapters implement ports.",
+  "detect": {
+    "priority": 45,
+    "any": [
+      {
+        "files": [
+          "**/go.mod",
+          "**/domain/**/*.go",
+          "**/adapters/**/*.go"
+        ]
+      },
+      {
+        "files": [
+          "**/go.mod",
+          "**/domain/**/*.go",
+          "**/adapter/**/*.go"
+        ]
+      }
+    ]
+  },
+  "units": [
+    {
+      "kind": "Hexagon",
+      "glob": "**",
+      "require": [
+        "adapters/",
+        "adapter/"
+      ],
+      "exclude": [
+        "**/*_test.go",
+        "**/testdata/**"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "id": "domain",
+      "patterns": [
+        "**/domain/**",
+        "**/core/domain/**"
+      ],
+      "name": "Domain"
+    },
+    {
+      "id": "ports",
+      "patterns": [
+        "**/ports/**",
+        "**/port/**"
+      ],
+      "name": "Ports"
+    },
+    {
+      "id": "application",
+      "patterns": [
+        "**/services/**",
+        "**/service/**",
+        "**/application/**",
+        "**/usecases/**",
+        "**/app/**"
+      ],
+      "name": "Application"
+    },
+    {
+      "id": "adapters",
+      "patterns": [
+        "**/adapters/**",
+        "**/adapter/**"
+      ],
+      "name": "Adapters"
+    }
+  ],
+  "rules": [
+    {
+      "id": "domain-is-pure",
+      "type": "calls",
+      "from": "domain",
+      "to": [
+        "ports",
+        "application",
+        "adapters"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "The domain does not depend on ports, services or adapters"
+    },
+    {
+      "id": "ports-not-adapters",
+      "type": "calls",
+      "from": "ports",
+      "to": [
+        "application",
+        "adapters"
+      ],
+      "allow": false,
+      "scope": "any",
+      "text": "Ports do not depend on services or adapters"
+    },
+    {
+      "id": "application-not-adapters",
+      "type": "calls",
+      "from": "application",
+      "to": "adapters",
+      "allow": false,
+      "scope": "any",
+      "text": "Services use ports, not adapters"
+    }
+  ]
+}
