@@ -16,6 +16,7 @@ from urllib.parse import unquote
 from . import handover, hotspots
 from .architecture import Architecture, ArchitectureError
 from .findings import Findings
+from .vocab import Vocab
 from .project import Project, ProjectError, UntrustedExport, etag, read_json, write_atomic, write_json
 from .handover import Handovers
 from .store import Conflict, NotFound, Store, wait
@@ -36,9 +37,10 @@ def changes(p: Project, store: Store) -> dict:
          "target_rev": st.get("target_rev", 0), "target_by": st.get("target_by"),
          "suggestions_version": Suggestions(p.dir).version(), "handover_version": Handovers(p.dir).version(),
          "architecture_etag": etag(p.path("architecture.json")), "findings_etag": etag(p.path("baseline.json")),
+         "vocabulary_etag": etag(p.path("vocabulary.json")),
          "activity_etag": etag(p.path("activity.json"))}
     c["key"] = ".".join(str(c[k]) for k in ("version", "model_etag", "target_rev", "suggestions_version",
-                                            "handover_version", "architecture_etag", "findings_etag",
+                                            "handover_version", "architecture_etag", "findings_etag", "vocabulary_etag",
                                             "activity_etag"))
     return c
 
@@ -52,6 +54,8 @@ def make_handler(p: Project, store: Store):
     arch_lock = threading.Lock()
     findings = Findings(p)
     findings.arch = arch  # share the profile analysis cache
+    vocab = Vocab(p)
+    vocab_lock = threading.Lock()
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
@@ -154,6 +158,19 @@ def make_handler(p: Project, store: Store):
                         return self.send_json({**findings.listing(store), **changes(p, store)})
                 except ArchitectureError as e:
                     return self.send_json({"error": str(e)}, HTTPStatus.NOT_FOUND)
+            if path == "/api/vocabulary/candidates":
+                try:
+                    with vocab_lock:
+                        return self.send_json({**vocab.candidates(unquote(params.get("component", "")) or None,
+                                                                  int(params["top"]) if params.get("top") else None,
+                                                                  params.get("ignored") == "1"),
+                                               **changes(p, store)})
+                except NotFound as e:
+                    return self.send_json({"error": str(e).strip("'\"")}, HTTPStatus.NOT_FOUND)
+                except KeyError as e:
+                    return self.send_json({"error": str(e).strip("'\"")}, HTTPStatus.NOT_FOUND)
+                except ValueError as e:
+                    return self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
             if path == "/api/suggestions":
                 return self.send_json({"suggestions": suggestions.newest(), **changes(p, store)})
             parts = path.strip("/").split("/")
@@ -224,6 +241,16 @@ def make_handler(p: Project, store: Store):
                                                    "finding": findings.get(parts[2], store), **changes(p, store)})
                         f = findings.decide(parts[2], FINDING_ACTIONS[parts[3]], b.get("reason"))
                     return self.send_json({"finding": f, **changes(p, store)})
+                if parts[:2] == ["api", "vocabulary"] and len(parts) == 3 and parts[2] in ("ignore", "unignore"):
+                    if not isinstance(b.get("term"), str) or (b.get("component") is not None
+                                                             and not isinstance(b.get("component"), str)):
+                        raise ValueError("term (and component, when given) must be strings")
+                    with vocab_lock:
+                        d = vocab.set_ignored(b["term"], b.get("component") or None, parts[2] == "ignore")
+                    return self.send_json({**d, **changes(p, store)})
+                if parts == ["api", "vocabulary", "draft"]:
+                    return self.send_json({"thread": draft_thread(p, store, b.get("components"), b.get("note")),
+                                           **changes(p, store)})
                 if parts == ["api", "handover"]:
                     return self.send_json(handovers.create(store, b.get("mode", "all"), b.get("note", "")))
                 if len(parts) == 4 and parts[:2] == ["api", "handover"] and parts[3] == "approve":
@@ -282,6 +309,25 @@ def make_handler(p: Project, store: Store):
             self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
     return Handler
+
+
+def draft_thread(p: Project, store: Store, components=None, note=None) -> dict:
+    """A thread asking the agent to draft glossaries from the candidates."""
+    if components is not None and (not isinstance(components, list)
+                                   or not all(isinstance(c, str) for c in components)):
+        raise ValueError("components must be a list of component ids")
+    model = read_json(p.model_path) or {}
+    bad = [c for c in components or [] if c not in (model.get("components") or {})]
+    if bad:
+        raise NotFound(f"no component {bad[0]}")
+    which = ("for " + ", ".join(f"@[{c}](comp:{c})" for c in components[:30])) if components else \
+        "for the components with the most code"
+    text = (f"Please draft glossaries {which}. Read the candidates with get_vocabulary_candidates, keep the real "
+            "domain concepts, write a one-line definition for each, decide owners and uses/avoid from the "
+            "cross-component counts, and send them with propose_glossary.")
+    if note:
+        text += "\n\n" + str(note)[:2000]
+    return store.create("glossary", "Draft glossaries", text, "human")
 
 
 def free_port(host: str, start: int, tries: int = 20) -> int:

@@ -113,6 +113,22 @@ it lists the new ones, those the human has not accepted or dismissed.
 `archplan check` prints the new findings in a terminal and exits with 1 when
 there are any. In CI, use `archplan check --format github`.
 
+### Glossaries
+
+When the human asks for glossaries, or a thread is anchored on `glossary`:
+
+1. Call `get_vocabulary_candidates()` for all components, or with a
+   component for its top 30 terms.
+2. Pick the domain concepts. Skip technical words, framework names and
+   noise. Merge terms that name the same thing.
+3. Write a one-line definition for each concept. Ground it in the samples,
+   the sites and the types of the term; read the code when unsure.
+4. Decide the owner, `uses` and `avoid` from the counts in other
+   components. The owner is usually the component with the most uses.
+5. Call `propose_glossary(components, note, thread)` in batches of about 10
+   concepts. The human reviews it as a suggestion. On approval, write the
+   `GLOSSARY.md` files as the handover asks.
+
 ## 6. Model before you build
 
 When the human asks you to model a change, use `edit_target` (add or move
@@ -179,3 +195,4 @@ progress.
 | `archplan hotspots` | hotspots and hidden coupling from the git history |
 | `archplan profile` | the architecture profile and its rule breaks |
 | `archplan check` | new findings; exit 1 when there are any |
+| `archplan glossary candidates` | glossary candidate terms per component |

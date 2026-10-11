@@ -918,5 +918,159 @@ class FindingsTest(TempProject):
         self.assertEqual({x["kind"] for x in got["findings"]}, {"types.fields", "types.synonyms"})
 
 
+VOCAB_TREE = {
+    "lib/billing/invoice.py": """\
+        class Invoice:
+            def send_invoice(self, invoice_line, payment_term):
+                # an invoice goes to the debtor
+                return invoice_line.debtor_name
+        def invoice_total(invoices): ...
+        def overdue_invoices(debtor): ...
+        """,
+    "lib/billing/debtor.py": "def remind_debtor(debtor, invoice): return debtor.invoice_line\n",
+    "lib/shop/cart.py": """\
+        class Cart:
+            def add_product(self, product, cart_line): ...
+            def checkout(self, cart, voucher): return self.invoice
+        def empty_cart(cart): ...
+        def apply_voucher(cart, voucher_code): ...
+        """,
+    "lib/shop/product.py": "class Product:\n    def price(self, product_variant): return product_variant.price\n",
+    "lib/users/user.py": "class User:\n    def login(self, password, user_session): ...\n    def avatar(self, user): ...\n",
+    "lib/users/profile.py": "def user_profile(user, avatar_url, nickname): return nickname\n",
+    "lib/search/index.py": "def rebuild_index(index, shard): return shard.tokens\n",
+    "lib/mail/outbox.py": "def queue_mail(outbox, mail, recipient): return recipient\n",
+}
+
+
+def vocab_model():
+    comps = {c: {"name": c, "path": f"lib/{c}", "match": [f"lib/{c}/**"]} for c in ("billing", "shop", "users", "search", "mail")}
+    types = {"billing.Invoice": {"name": "Invoice", "component": "billing", "file": "lib/billing/invoice.py"},
+             "shop.Cart": {"name": "Cart", "component": "shop", "file": "lib/shop/cart.py"}}
+    files = {f: {"component": f.split("/")[1], "refs": []} for f in VOCAB_TREE}
+    return {"format": "archmodel/1", "components": comps, "dependencies": [], "types": types, "files": files}
+
+
+class VocabTest(TempProject):
+    def setUp(self):
+        super().setUp()
+        write(self.root, VOCAB_TREE)
+        self.p = project.init(self.root)
+        self.p.model_path.write_text(json.dumps(vocab_model()))
+
+    def test_words(self):
+        from archplan.vocab import fold, fold_map, split, term_key, words
+        self.assertEqual(split("parseHTTPRequest_v2"), ["parse", "http", "request", "v", "2"])
+        self.assertEqual(words("Systems.Assignment.CrewTasks"), ["system", "assignment", "crew", "task"])
+        self.assertEqual([fold(w) for w in ("entities", "batches", "carts", "status", "address", "boxes", "bus")],
+                         ["entity", "batch", "cart", "status", "address", "box", "bus"])
+        self.assertEqual(term_key("CART_ITEMS"), term_key("cart item"))
+        self.assertEqual(fold_map({"zaken", "adres", "carts", "cart"}),
+                         {"zaken": "zaken", "adres": "adres", "carts": "cart", "cart": "cart"})
+
+    def test_tfidf_and_ignore(self):
+        from archplan.vocab import Vocab, clean_ignore
+        v = Vocab(self.p)
+        res = v.candidates("billing")
+        terms = [t["term"] for t in res["components"]["billing"]["terms"]]
+        # debtor only occurs in billing, so its idf beats invoice, which shop also uses
+        self.assertEqual(terms[:2], ["invoice", "debtor"])
+        self.assertIn("invoice line", terms)  # a bigram inside one identifier
+        self.assertNotIn("self", terms)
+        inv = res["components"]["billing"]["terms"][0]
+        self.assertEqual(inv["others"], [{"component": "shop", "count": 1}])
+        self.assertEqual(inv["owner_guess"], "billing")
+        self.assertIn("billing.Invoice", inv["types"])
+        self.assertTrue(inv["sites"][0].startswith("lib/billing/"))
+        self.assertTrue(self.p.path("vocab-cache.json").exists())
+        self.assertIn("vocab-cache.json", self.p.path(".gitignore").read_text())
+        v.set_ignored("Debtors", "billing", True)
+        v.set_ignored("voucher", None, True)
+        self.assertNotIn("debtor", [t["term"] for t in v.candidates("billing")["components"]["billing"]["terms"]])
+        self.assertNotIn("voucher", [t["term"] for t in v.candidates("shop")["components"]["shop"]["terms"]])
+        flagged = v.candidates("billing", ignored=True)["components"]["billing"]
+        self.assertEqual(next(t for t in flagged["terms"] if t["term"] == "debtor")["ignored"], "here")
+        self.assertEqual(flagged["ignored"], ["debtor"])
+        v.set_ignored("debtor", "billing", False)
+        self.assertEqual(v.ignored(), {"ignore": ["voucher"], "ignore_in": {}})
+        self.assertEqual(clean_ignore({"ignore": ["X" * 500, 3, {"a": 1}, None], "ignore_in": {"c": "nope", "d": ["Carts"]}}),
+                         {"ignore": ["x" * 60], "ignore_in": {"d": ["cart"]}})
+        self.assertEqual(clean_ignore("junk"), {"ignore": [], "ignore_in": {}})
+
+    def test_glossary_enrichment(self):
+        from archplan.vocab import enrich, parse_glossary
+        g = parse_glossary("---\nowns:\n  Invoice: [bill]  # the main one\n  debtor:\n    - payer\nuses: []\n"
+                           "avoid:\n  - cart\n---\n**Invoice**: what a debtor owes.\n")
+        self.assertEqual(g["owns"], {"Invoice": ["bill"], "debtor": ["payer"]})
+        self.assertEqual((g["avoid"], g["definitions"]["invoice"]), (["cart"], "what a debtor owes."))
+        write(self.root, {"lib/billing/GLOSSARY.md": "---\nowns:\n  Invoice: []\nuses: []\navoid: [cart]\n---\n"
+                                                     "**Invoice**: what a debtor owes.\n",
+                          "lib/shop/GLOSSARY.md": "---\nowns:\n  Cart: []\n---\n"})
+        self.assertTrue(enrich(self.p))
+        v = json.loads(self.p.model_path.read_text())["vocabulary"]
+        self.assertEqual(v["concepts"]["invoice"]["definition"], "what a debtor owes.")
+        self.assertEqual(v["components"]["billing"]["avoid"], ["cart"])
+        self.assertIn("debtor", [x["term"] for x in v["components"]["billing"]["suggested"]])
+        rows = {(u["component"], u["concept"]): u for u in v["usage"]}
+        self.assertEqual(rows[("shop", "invoice")]["idents"], 1)
+        self.assertEqual(rows[("shop", "invoice")]["evidence"], ["lib/shop/cart.py:3"])
+        m = json.loads(self.p.model_path.read_text())
+        self.assertEqual([(x["component"], x["concept"], x["why"]) for x in model.leaks(m)], [])
+        m["vocabulary"]["components"]["shop"] = {"avoid": ["invoice"]}
+        self.assertEqual([(x["component"], x["concept"], x["why"]) for x in model.leaks(m)],
+                         [("shop", "invoice", "avoid")])
+        self.assertFalse(enrich(self.p))  # a model with a vocabulary is left alone
+
+    def test_propose_glossary(self):
+        a = Agent(self.p)
+        draft = {"billing": {"concepts": [{"name": "Invoice", "terms": ["invoice", "bill"],
+                                           "definition": "What a debtor owes.", "kind": "domain"},
+                                          {"name": "Debtor"}]},
+                 "shop": {"concepts": [{"name": "Cart"}], "uses": ["invoice"], "avoid": ["Debtor"]}}
+        out = a.propose_glossary(draft, "first glossaries")
+        sg = Suggestions(self.p.dir).get(out["suggestion"])
+        self.assertEqual([o["op"] for o in sg["ops"]], ["add_concept", "add_concept", "add_concept", "set_glossary"])
+        self.assertEqual(sg["ops"][0], {"op": "add_concept", "id": "invoice", "name": "Invoice", "owner": "billing",
+                                        "terms": ["invoice", "bill"], "kind": "domain",
+                                        "definition": "What a debtor owes."})
+        self.assertEqual(sg["ops"][3], {"op": "set_glossary", "component": "shop", "uses": ["invoice"],
+                                        "avoid": ["debtor"]})
+        Suggestions(self.p.dir).decide(self.p, sg["id"], None)
+        t = json.loads(self.p.target_path.read_text())["vocabulary"]
+        self.assertEqual(t["concepts"]["debtor"]["terms"], ["debtor"])
+        self.assertEqual(t["components"]["shop"], {"uses": ["invoice"], "avoid": ["debtor"]})
+        for bad, msg in [({"nope": {"concepts": [{"name": "X"}]}}, "no component"),
+                         ({"shop": {"concepts": [{"name": "Invoice"}]}}, "already owned by billing"),
+                         ({"shop": {"concepts": [{"name": "A"}]}, "users": {"concepts": [{"name": "a"}]}}, "twice"),
+                         ({"users": {"uses": ["ghost"]}}, "unknown concept"),
+                         ({"billing": {"uses": ["Invoice"]}}, "owns itself")]:
+            with self.assertRaises(ValueError) as e:
+                a.propose_glossary(bad)
+            self.assertIn(msg, str(e.exception))
+
+    def test_api(self):
+        srv, url = serve_in_thread(self.p)
+        try:
+            st, d = call(url, "/api/vocabulary/candidates?top=3")
+            self.assertEqual((st, d["n_components"], set(d["components"])), (200, 5, {"billing", "shop", "users", "search", "mail"}))
+            self.assertLessEqual(len(d["components"]["billing"]["terms"]), 3)
+            key = d["key"]
+            self.assertEqual(call(url, "/api/vocabulary/candidates?component=nope")[0], 404)
+            st, d = call(url, "/api/vocabulary/ignore", "POST", {"term": "invoice"})
+            self.assertEqual((st, d["ignore"]), (200, ["invoice"]))
+            self.assertNotEqual(d["key"], key)
+            self.assertEqual(call(url, "/api/vocabulary/ignore", "POST", {"term": ["x"]})[0], 400)
+            st, d = call(url, "/api/vocabulary/unignore", "POST", {"term": "invoice"})
+            self.assertEqual(d["ignore"], [])
+            st, d = call(url, "/api/vocabulary/draft", "POST", {"components": ["billing"], "note": "start here"})
+            self.assertEqual((st, d["thread"]["anchor"]), (200, "glossary"))
+            self.assertIn("@[billing](comp:billing)", d["thread"]["messages"][0]["text"])
+            self.assertEqual(call(url, "/api/vocabulary/draft", "POST", {"components": ["ghost"]})[0], 404)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertEqual(Agent(self.p).list_threads(waiting_on="agent")[0]["anchor"], "glossary")
+
+
 if __name__ == "__main__":
     unittest.main()

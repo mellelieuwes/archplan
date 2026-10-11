@@ -242,6 +242,10 @@ ul.breaks{margin:4px 0 8px;padding-left:18px;font-size:13px;max-height:260px;ove
 .fsm{font-size:12.5px}.fev{list-style:none;margin:4px 0 0;padding:0;font-size:12.5px}.fev li{padding:1px 0}.fkv{font-size:12.5px;margin-top:4px;overflow-wrap:anywhere}
 .fld{display:inline-block;font:12px ui-monospace,Menlo,monospace;color:#0f172a;border-radius:4px;padding:0 6px;margin:3px 4px 0 0}
 .fbox{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0}.fev-box{border:1px solid var(--line);border-radius:6px;padding:6px 9px;background:var(--bg)}
+.cand{border-bottom:1px solid var(--soft)}.cand-h{display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;flex-wrap:wrap}.cand-h:hover{background:var(--bg)}.cand.ign{opacity:.6}
+.cand-x{font-size:12.5px;padding:2px 4px 8px;display:grid;gap:4px;overflow-wrap:anywhere}
+.draft{margin-top:10px}.draft textarea{width:100%;box-sizing:border-box}.draft.big .btn.primary{font-size:15px;padding:8px 14px}
+.sop .sub{display:block;font-size:12.5px;color:var(--mute)}
 </style>
 </head>
 <body>
@@ -330,7 +334,7 @@ ul.breaks{margin:4px 0 8px;padding-left:18px;font-size:13px;max-height:260px;ove
         <button data-mode="sugg" id="suggMode" hidden title="The target with the pending suggestion applied">With suggestion</button>
       </div>
       <select id="seqSel" style="display:none;max-width:240px" title="Sequence"></select>
-      <select id="unitSel" style="display:none;max-width:240px" title="Unit"></select><select id="cmpSel" style="display:none;max-width:240px" title="Show a second unit below, to compare"></select>
+      <select id="unitSel" style="display:none;max-width:240px" title="Unit"></select><select id="cmpSel" style="display:none;max-width:240px" title="Show a second unit below, to compare"></select><button class="btn" id="draftBtn" style="display:none" title="Claude proposes concepts, owners and definitions from the candidate terms">Draft glossaries…</button>
       <button class="btn" id="seqInfo" style="display:none" title="Edit this sequence: add calls and participants">Sequence page</button>
       <div class="focus" id="focusBox"><input id="focusIn" list="focusList" placeholder="⌖ Focus…"><datalist id="focusList"></datalist><span id="chips"></span></div>
       <div class="menu-wrap"><button class="btn" id="viewBtn" title="What the diagram shows">View ▾</button>
@@ -583,6 +587,7 @@ async function pollThreads() {
       if (d.activity_etag !== known.actEtag) { known.actEtag = d.activity_etag; loadActivity(); }
       if (d.handover_version !== known.hoVer) { known.hoVer = d.handover_version; loadHandover(); }
       if ((d.architecture_version ?? d.architecture_etag) !== known.archVer) { known.archVer = d.architecture_version ?? d.architecture_etag; loadArch(); }
+      if ((d.vocabulary_version ?? d.vocabulary_etag) !== known.vocVer) { known.vocVer = d.vocabulary_version ?? d.vocabulary_etag; VOC.cand = {}; if (VOC.ok) renderSide(); else probeVocab(); }
       if ((d.findings_version ?? d.findings_etag) !== known.findVer) { known.findVer = d.findings_version ?? d.findings_etag; loadFindings(); }
     } catch { await new Promise(r => setTimeout(r, 3000)); }
   }
@@ -2444,7 +2449,7 @@ const parseTerms = s => [...new Set(s.split(',').map(x => x.trim()).filter(Boole
 const slugId = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'concept';
 function newConceptId(m, name) { const V = vocabOf(m), base = slugId(name); let id = base, i = 2; while (V.concepts[id] || concept(asIs, id)) id = base + '-' + i++; return id; }
 function compGlossHTML(m, id, ro) {
-  if (!hasVocab(m) && !hasVocab(asIs)) return '';
+  if (!hasVocab(m) && !hasVocab(asIs)) { const ch = candHTML(id, ro); return ch ? `<h4>Glossary</h4><p class="mute fsm">No concepts yet.</p>${ch}` : ''; }
   const V = m.vocabulary || {concepts: {}}, cv = vcomp(m, id);
   const owned = Object.entries(V.concepts || {}).filter(([, k]) => k.owner === id);
   const list = name => `<ul class="members">${(cv[name] || []).map(k => `<li>${conceptLink(m, k)}${ro ? '' : `<button class="x" title="Remove" data-act="vocab.del" data-list="${name}" data-id="${esc(k)}">×</button>`}</li>`).join('') || '<li class="mute">none</li>'}</ul>
@@ -2453,7 +2458,7 @@ function compGlossHTML(m, id, ro) {
   return `<h4>Glossary</h4><div class="anchor mono">📄 ${esc(glossFile(m, id))}</div>
     <h4>Owns</h4><p>${owned.map(([k]) => conceptLink(m, k)).join(', ') || '<span class="mute">nothing</span>'}</p>
     <h4>Uses</h4>${list('uses')}<h4>Avoid</h4>${list('avoid')}
-    ${sug.length ? `<h4>Suggested terms</h4><ul class="members">${sug.map((x, i) => `<li><span>${esc(x.term)} <span class="mute">${x.score ?? ''}</span></span>${ro ? '' : `<button class="btn" data-act="vocab.adopt" data-i="${i}">Adopt</button>`}</li>`).join('')}</ul>` : ''}
+    ${candHTML(id, ro) ?? (sug.length ? `<h4>Suggested terms</h4><ul class="members">${sug.map((x, i) => `<li><span>${esc(x.term)} <span class="mute">${x.score ?? ''}</span></span>${ro ? '' : `<button class="btn" data-act="vocab.adopt" data-i="${i}">Adopt</button>`}</li>`).join('')}</ul>` : '')}
     <h4>Leaks</h4>${lk.length ? `<ul class="members">${lk.map(l => leakLi(m, l)).join('')}</ul>` : '<p class="mute">None.</p>'}`;
 }
 
@@ -2506,7 +2511,8 @@ function glossPage() {
     <div class="row"><select id="i-kowner">${ownerOpts([...focus][0] || '')}</select></div>
     <div class="row"><input id="i-kterms" placeholder="terms, comma separated: cart item, basket"></div>
     <textarea id="i-kdef" rows="2" placeholder="Definition"></textarea>
-    <div class="row"><button class="btn primary" data-act="concept.add">Add concept</button></div>`}`;
+    <div class="row"><button class="btn primary" data-act="concept.add">Add concept</button></div>`}
+    ${VOC.ok ? draftHTML(false) : ''}`;
 }
 function modelPage() {
   return `${crumb('Edit the model')}${roNote()}<div class="ins-h"><b>${esc(META.repo)}</b> <span class="mute mono">@${esc(META.commit)}</span></div>
@@ -2949,7 +2955,7 @@ $('hoDlg').addEventListener('click', async e => {
 $('hoDlg').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); $('hoDlg').hidden = true; } });
 $('sendBtn').addEventListener('click', hoDialog);
 // Keep what the user types in the lock-in and edit forms across live updates.
-$('panel').addEventListener('input', e => { if (/^(lk|rfe|ar|fd)-/.test(e.target.id)) drafts[e.target.id] = e.target.value; });
+$('panel').addEventListener('input', e => { if (/^(lk|rfe|ar|fd|vd)-/.test(e.target.id)) drafts[e.target.id] = e.target.value; });
 const clearDrafts = pre => Object.keys(drafts).filter(k => k.startsWith(pre)).forEach(k => delete drafts[k]);
 // Drag cards to reorder the stack; drag chips between the batches of a proposal.
 $('panel').addEventListener('dragstart', e => {
@@ -3433,6 +3439,93 @@ Object.assign(actions, {
   },
   'find.thread': e => openThread(e.dataset.id),
 });
+// ---------- candidate terms (tf-idf over the code) ----------
+// GET /api/vocabulary/candidates ranks the words each component uses more than
+// the rest of the code. Without that endpoint the old "Suggested terms" list stays.
+const VOC = {ok: null, cand: {}, busy: new Set(), open: null, showIgn: false, n: 0};
+async function probeVocab() {
+  if (!collab) return;
+  try { const d = await api('GET', '/api/vocabulary/candidates?top=1'); VOC.ok = !!(d && d.components); VOC.n = d?.n_components || 0; }
+  catch { VOC.ok = false; }
+  if (D && view === 'glossary') render(); else if (D) renderSide();
+}
+async function loadCand(id) {
+  if (VOC.busy.has(id) || VOC.ok === false) return;
+  VOC.busy.add(id);
+  try {
+    const d = await api('GET', `/api/vocabulary/candidates?component=${encodeURIComponent(id)}&top=40`);
+    VOC.ok = true; VOC.cand[id] = d.components?.[id] || {terms: []};
+  } catch (err) { if (/404/.test(err.message)) VOC.ok = false; else VOC.cand[id] = {terms: [], err: err.message}; }
+  VOC.busy.delete(id);
+  if (sel?.kind === 'comp' && sel.id === id) renderSide();
+}
+const adoptedTerms = () => new Set(Object.values(toBe.vocabulary?.concepts || {}).flatMap(k => [k.name, ...(k.terms || [])]).map(t => String(t).toLowerCase()));
+const strOf = x => typeof x === 'string' ? x : x?.name || x?.ident || x?.text || (x?.file ? `${x.file}${x.line ? ':' + x.line : ''}` : JSON.stringify(x));
+function candHTML(id, ro) {
+  if (VOC.ok === false) return null;
+  const c = VOC.cand[id];
+  if (!c) { loadCand(id); return '<h4>Candidate terms</h4><p class="mute">Reading the code…</p>'; }
+  if (c.err) return `<h4>Candidate terms</h4><p class="mute">Could not rank terms: ${esc(c.err)}</p>`;
+  const ign = new Map((c.ignored || []).map(x => typeof x === 'string' ? [x, {term: x}] : [x.term, x]));
+  const isIgn = t => !!t.ignored || ign.has(t.term), terms = (c.terms || []).filter(t => VOC.showIgn || !isIgn(t));
+  const max = Math.max(...(c.terms || []).map(t => +t.score || 0), 1e-9), have = adoptedTerms();
+  const extraIgn = VOC.showIgn ? [...ign.values()].filter(x => !(c.terms || []).some(t => t.term === x.term)) : [];
+  const nIgn = (c.terms || []).filter(isIgn).length + [...ign.keys()].filter(k => !(c.terms || []).some(t => t.term === k)).length;
+  const row = t => {
+    const k = t.counts || {}, ch = [['ident', 'ident'], ['string', 'str'], ['comment', 'comment']].filter(([a]) => k[a]).map(([a, l]) => `${k[a]} ${l}`).join(' · ');
+    const others = t.others || [], og = t.owner_guess && t.owner_guess !== id ? t.owner_guess : '', open = VOC.open === id + '|' + t.term, ig = isIgn(t), ad = have.has(String(t.term).toLowerCase());
+    const sc = ig && (t.ignored === 'everywhere' || t.ignored === 'all' || (ign.has(t.term) && !ign.get(t.term).component)) ? 'all' : 'here';
+    return `<div class="cand${ig ? ' ign' : ''}"><div class="cand-h" data-act="vc.open" data-c="${esc(id)}" data-t="${esc(t.term)}" title="Show where it occurs">
+      <span class="mono"><b>${esc(t.term)}</b></span><span class="bar" style="width:46px" title="score ${esc(String(t.score ?? ''))}"><i style="width:${Math.max(4, Math.round(100 * (+t.score || 0) / max))}%"></i></span>
+      <span class="mute fsm">${(t.df > 1 || others.length) ? `also in ${plural(Math.max(others.length, (t.df || 1) - 1), 'component')}` : 'only here'}${ch ? ' · ' + esc(ch) : ''}</span>
+      ${og ? `<span class="pill warn fsm" title="Most uses are in ${esc(cn(og))}">owner? ${esc(cn(og))}</span>` : ''}<span class="spacer"></span>
+      ${ro ? '' : ig ? `<button class="btn ghost" data-act="vc.unignore" data-t="${esc(t.term)}" data-c="${sc === 'all' ? '' : esc(id)}">Unignore</button>` : ad ? '<span class="pill add fsm">in glossary</span>' : `<button class="btn" data-act="vc.adopt" data-t="${esc(t.term)}" title="Add a concept owned by this component">Adopt</button><button class="btn ghost" data-act="vc.ignore" data-t="${esc(t.term)}" data-c="${esc(id)}" title="Hide it for this component">Ignore</button>`}</div>
+      ${open ? `<div class="cand-x">
+        ${(t.samples || []).length ? `<div><span class="mute">Identifiers</span> ${t.samples.slice(0, 12).map(x => `<span class="fld" style="background:var(--soft);color:var(--ink)">${esc(strOf(x))}</span>`).join('')}</div>` : ''}
+        ${(t.types || []).length ? `<div><span class="mute">Types</span> ${t.types.slice(0, 10).map(x => esc(tn(strOf(x)))).join(', ')}</div>` : ''}
+        ${(t.sites || []).length ? `<ul class="fev">${t.sites.slice(0, 8).map(x => `<li class="mono">${esc(strOf(x))}</li>`).join('')}${more(t.sites.length, 8)}</ul>` : ''}
+        ${others.length ? `<div><span class="mute">Also in</span> ${others.slice(0, 8).map(o => `${esc(cn(o.component))} <span class="mute">(${esc(String(o.count ?? ''))})</span>`).join(', ')}${others.length > 8 ? ', …' : ''}</div>` : ''}
+        ${ro || ig ? '' : `<div class="row" style="margin:4px 0 0"><button class="linkb" data-act="vc.ignore" data-t="${esc(t.term)}" data-c="">Ignore in every component</button></div>`}</div>` : ''}</div>`;
+  };
+  return `<h4 style="display:flex;align-items:baseline">Candidate terms<span class="spacer"></span>${nIgn || VOC.showIgn ? `<button class="linkb" data-act="vc.showign" style="text-transform:none;letter-spacing:0;font-weight:400">${VOC.showIgn ? 'Hide ignored' : `Show ignored (${nIgn})`}</button>` : ''}</h4>
+    <p class="mute fsm" style="margin:0 0 4px">Words this component uses much more than the rest of the code. Adopt one to make it a concept this component owns.</p>
+    ${terms.map(row).join('') || '<p class="mute">No candidate terms.</p>'}
+    ${extraIgn.map(x => `<div class="cand ign"><div class="cand-h"><span class="mono"><b>${esc(x.term)}</b></span><span class="mute fsm">${x.component ? 'ignored here' : 'ignored everywhere'}</span><span class="spacer"></span>${ro ? '' : `<button class="btn ghost" data-act="vc.unignore" data-t="${esc(x.term)}" data-c="${esc(x.component || '')}">Unignore</button>`}</div></div>`).join('')}`;
+}
+async function vocCall(path, body, what) {
+  try { await api('POST', path, body); } catch (err) { toast(`Could not ${what}: ${err.message}`); }
+  VOC.cand = {}; renderSide();
+}
+// Which components a draft covers: the selected ones, else the focus.
+const draftScope = () => { const ms = multi.filter(a => a.startsWith('comp:')).map(a => a.slice(5)); return ms.length ? ms : sel?.kind === 'comp' ? [sel.id] : [...focus]; };
+const draftHTML = big => { const sc = draftScope(); return `<div class="${big ? 'draft big' : 'draft'}">
+  ${big ? '' : '<h4>Draft with Claude</h4><p class="mute fsm" style="margin:0 0 6px">Claude reads the candidate terms of each component and proposes concepts, owners and definitions as a suggestion.</p>'}
+  <textarea id="vd-note" rows="${big ? 2 : 1}" placeholder="Optional note for Claude, e.g. focus on the payment domain">${esc(draft('vd-note', ''))}</textarea>
+  <div class="row"><button class="btn primary" data-act="vocab.draft" data-scope="all">Ask Claude to draft glossaries${sc.length ? ' for all components' : ''}</button>${sc.length ? `<button class="btn" data-act="vocab.draft" data-scope="sel">Only for ${sc.length === 1 ? esc(cn(sc[0])) : 'these ' + sc.length + ' components'}</button>` : ''}</div></div>`; };
+Object.assign(actions, {
+  'vc.open': e => { const k = e.dataset.c + '|' + e.dataset.t; VOC.open = VOC.open === k ? null : k; renderSide(); },
+  'vc.showign': () => { VOC.showIgn = !VOC.showIgn; renderSide(); },
+  'vc.ignore': e => vocCall('/api/vocabulary/ignore', e.dataset.c ? {term: e.dataset.t, component: e.dataset.c} : {term: e.dataset.t}, 'ignore the term'),
+  'vc.unignore': e => vocCall('/api/vocabulary/unignore', e.dataset.c ? {term: e.dataset.t, component: e.dataset.c} : {term: e.dataset.t}, 'unignore the term'),
+  'vc.adopt': e => {
+    const term = e.dataset.t, c = sel?.id; if (!c) return;
+    edit(m => {
+      const V = vocabOf(m), name = term[0].toUpperCase() + term.slice(1);
+      V.concepts[newConceptId(m, name)] = {name, owner: c, terms: [term], kind: 'domain', source: 'glossary'};
+      const cv = V.components?.[c]; if (cv?.suggested) cv.suggested = cv.suggested.filter(x => x.term !== term);
+    });
+  },
+  'vocab.draft': async e => {
+    const comps = e.dataset.scope === 'sel' ? draftScope() : null, note = val('vd-note');
+    toast('Asking Claude to draft the glossaries…');
+    let r; try { r = await api('POST', '/api/vocabulary/draft', {...(comps ? {components: comps} : {}), ...(note ? {note} : {})}); }
+    catch (err) { return toast(`Could not ask for a draft: ${err.message}`); }
+    clearDrafts('vd-'); await syncThreads();
+    const tid = r?.thread?.id || r?.id; if (tid) openThread(tid);
+  },
+});
+$('draftBtn').addEventListener('click', () => { actions['page.glossary'](); const t = $('vd-note'); if (t) { t.scrollIntoView({block: 'center'}); t.focus(); } });
+$('gloss').addEventListener('input', e => { if (e.target.id === 'vd-note') drafts['vd-note'] = e.target.value; });
 $('panel').addEventListener('click', e => {
   const mn = e.target.closest('.mention'); if (mn) { e.preventDefault(); return gotoMention(mn.dataset.anchor); }
   const sn = e.target.closest('.snap'); if (sn && !e.target.closest('[data-act]')) return actions['snap.open'](sn);
@@ -3765,6 +3858,11 @@ function saveTarget() {
 function renderGloss() { withSugg(renderGloss0); }
 function renderGloss0() {
   const el = $('gloss'), M = mode === 'asis' ? asIs : toBe;
+  if (!hasVocab(asIs) && !hasVocab(toBe) && VOC.ok) {
+    el.innerHTML = `<div class="callout" style="max-width:660px"><b>No glossary yet.</b>
+      <p>archplan ranks the words each component uses more than the rest of the code; open a component in the Components view to see them. Claude can turn these candidates into concepts with owners and definitions, which you review as a suggestion.</p>${draftHTML(true)}</div>`;
+    return;
+  }
   if (!hasVocab(asIs) && !hasVocab(toBe)) {
     el.innerHTML = `<div class="callout" style="max-width:660px"><b>This model has no vocabulary yet.</b>
       <p>Each component can keep a <code>GLOSSARY.md</code> in its directory. Its front matter lists the concepts it owns (with extra terms), the concepts it uses from other components and the ones it must avoid. Below that, one <code>**Name**: definition</code> line per owned concept.</p>
@@ -3817,6 +3915,7 @@ function renderGloss0() {
 }
 $('gloss').addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (b && actions[b.dataset.act]) return actions[b.dataset.act](b);
+  if (e.target.closest('.draft')) return;
   const k = e.target.closest('[data-concept]'); if (k) return select({kind: 'concept', id: k.dataset.concept});
   const c = e.target.closest('[data-comp]'); if (c) return select({kind: 'comp', id: c.dataset.comp});
   select(null);
@@ -4058,6 +4157,21 @@ function opLine(o) {
     case 'remove_dependency': return ['− line', 'rem', `${C(o.from)} → ${C(o.to)}`];
     case 'add_dependency': return ['+ line', 'add', `${C(o.from)} → ${C(o.to)}`];
   }
+  // Glossary ops: a concept with its owner, terms and definition, or a component's uses and avoid lists.
+  if (o.op === 'set_glossary') {
+    const names = l => [].concat(l || []).map(k => conceptName(toBe, k) || k).join(', ') || 'none';
+    return ['~ glossary', 'chg', `${C(o.component)}: ${[o.uses ? 'uses ' + names(o.uses) : '', o.avoid ? 'avoids ' + names(o.avoid) : ''].filter(Boolean).join(' · ')}`];
+  }
+  if (/concept|vocab|gloss|uses|avoid/.test(o.op)) {
+    const K = (o.concept && typeof o.concept === 'object' ? o.concept : o), kid = typeof o.concept === 'string' ? o.concept : o.id;
+    const kn = K.name || (kid && conceptName(toBe, kid)) || kid || '';
+    const terms = [].concat(K.terms || []), lst = [].concat(o.concepts || o.uses || o.avoid || []);
+    const bits = [K.owner ? `owned by ${C(K.owner)}` : '', terms.length ? `terms: ${terms.join(', ')}` : '', K.kind && K.kind !== 'domain' ? K.kind : ''].filter(Boolean);
+    const rm = /remove|delete|drop/.test(o.op), add = /add|new|create/.test(o.op), what = /avoid/.test(o.op) ? 'avoid' : /uses|use_/.test(o.op) ? 'uses' : 'concept';
+    const label = (rm ? '− ' : add ? '+ ' : '~ ') + what, cls = rm ? 'rem' : add ? 'add' : 'chg';
+    if (what !== 'concept') return [label, cls, `${C(o.component)}: ${(lst.length ? lst : [kid]).filter(Boolean).map(k => conceptName(toBe, k) || k).join(', ')}`];
+    return [label, cls, `${kn}${bits.length ? ' · ' + bits.join(' · ') : ''}`, K.definition || K.doc || ''];
+  }
   const {op, ...rest} = o;
   return ['? ' + op, 'chg', JSON.stringify(rest)];
 }
@@ -4075,7 +4189,7 @@ function sugCard(s) {
   const P = SUG.picked[s.id] ||= new Set((s.ops || []).map((_, i) => i)), ops = s.ops || [];
   return `<div class="sug" id="sug-${esc(s.id)}"><div class="sug-h">Suggested change to the target<span class="spacer"></span><span class="mute" style="font-weight:400;font-size:13px">${esc(relTime(s.created))}</span></div>
     ${s.note ? `<div class="note">${md(s.note)}</div>` : ''}
-    ${ops.map((o, i) => { const [k, c, t] = opLine(o); return `<label class="sop"><input type="checkbox" data-sug="${esc(s.id)}" data-i="${i}"${P.has(i) ? ' checked' : ''}><span class="k k-${c}">${esc(k)}</span><span>${esc(t)}</span></label>`; }).join('')}
+    ${ops.map((o, i) => { const [k, c, t, sub] = opLine(o); return `<label class="sop"><input type="checkbox" data-sug="${esc(s.id)}" data-i="${i}"${P.has(i) ? ' checked' : ''}><span class="k k-${c}">${esc(k)}</span><span>${esc(t)}${sub ? `<span class="sub">${esc(sub.length > 240 ? sub.slice(0, 239) + '…' : sub)}</span>` : ''}</span></label>`; }).join('')}
     <div class="acts"><button class="btn primary" data-act="sug.accept" data-id="${esc(s.id)}"${P.size ? '' : ' disabled'}>Accept ${P.size} of ${ops.length}</button><button class="btn" data-act="sug.reject" data-id="${esc(s.id)}">Reject</button><button class="btn" data-act="sug.show" data-id="${esc(s.id)}" title="Show the target with this suggestion in the diagram">Show in diagram</button><span class="eff">${esc(effText(s))}</span></div></div>`;
 }
 async function decideSug(id, how) {
@@ -4381,6 +4495,7 @@ function render(forceLayout) {
   $('focusBox').style.display = $('viewBtn').parentNode.style.display = view === 'seq' || view === 'roles' ? 'none' : '';
   $('modes').style.display = view === 'roles' ? 'none' : '';
   $('unitSel').style.display = $('cmpSel').style.display = view === 'roles' ? '' : 'none';
+  $('draftBtn').style.display = view === 'glossary' && VOC.ok && (hasVocab(asIs) || hasVocab(toBe)) ? '' : 'none';
   $('ovBtn').parentNode.style.display = view === 'roles' ? 'none' : '';
   $('leafOpt').style.display = view === 'glossary' || view === 'seq' ? 'none' : '';
   $('extOpt').style.display = view === 'components' ? '' : 'none';
@@ -4422,8 +4537,8 @@ window.addEventListener('load', () => requestAnimationFrame(async () => {
     $('proj').textContent = collab.name;
     known.modelEtag = collab.model_etag;
     const d = await api('GET', '/api/threads?since=-1'); threadsVer = d.version; threads = d.threads; pollKey = d.key;
-    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag; known.hoVer = d.handover_version; known.archVer = d.architecture_version ?? d.architecture_etag; known.findVer = d.findings_version ?? d.findings_etag;
-    loadActivity(); loadSuggestions(); loadHotspots(); loadHandover(); loadArch(); loadFindings();
+    known.sugVer = d.suggestions_version; known.actEtag = d.activity_etag; known.hoVer = d.handover_version; known.archVer = d.architecture_version ?? d.architecture_etag; known.findVer = d.findings_version ?? d.findings_etag; known.vocVer = d.vocabulary_version ?? d.vocabulary_etag;
+    loadActivity(); loadSuggestions(); loadHotspots(); loadHandover(); loadArch(); loadFindings(); probeVocab();
     $('hint').style.display = 'none';
   } else { $('proj').textContent = qs.has('sample') ? 'sample' : 'local file'; loadHotspots(); }
   const url = qs.has('sample') ? null : qs.get('model') || collab?.model;

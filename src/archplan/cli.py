@@ -12,6 +12,7 @@
   archplan hotspots [--since N]  components that change often, and ones that change together
   archplan profile [infer|show]  the architecture profile: roles, rules and where the code breaks them
   archplan check [--format github]  new findings (cycles, rule breaks, ...); exit 1 when there are any
+  archplan glossary candidates   candidate glossary terms per component, from tf-idf over the code
   archplan hook                  Claude Code hook: tell the agent about new comments
   archplan export-python         built-in exporter for Python projects
   archplan export-elixir         exporter for Elixir/Mix projects (needs mix)
@@ -364,6 +365,26 @@ def cmd_check(a):
     sys.exit(1 if new else 0)
 
 
+def cmd_glossary(a):
+    from .vocab import Vocab
+    p = project(a)
+    try:
+        res = Vocab(p).candidates(a.component, a.top)
+    except (KeyError, ValueError) as e:
+        die(str(e).strip("'\""))
+    if a.json:
+        return print(json.dumps(res, indent=2, ensure_ascii=False))
+    for c, x in res["components"].items():
+        have = ", ".join(k["name"] for k in x["concepts"])
+        print(f"{c} ({x['files']} files)" + (f"; concepts: {have}" if have else ""))
+        for t in x["terms"]:
+            others = ", ".join(f"{o['component']} {o['count']:g}" for o in t["others"][:3])
+            print(f"  {t['score']:6.2f}  {t['term']:<28} df {t['df']:<3} {', '.join(t['samples'][:3])[:60]}"
+                  + (f"  (also {others})" if others else ""))
+        print()
+    print(f"{res['n_components']} components, {res['took_ms']} ms", file=sys.stderr)
+
+
 def cmd_export_python(a):
     from .pyexport import export
     root = Path(a.root or ".").resolve()
@@ -466,6 +487,11 @@ def main(argv=None):
     s.add_argument("--update-baseline", action="store_true",
                    help="accept every current finding into .archplan/baseline.json (reason: baseline)")
     s.add_argument("--export", action="store_true", help="run the export command first")
+    s = add("glossary", cmd_glossary, "candidate glossary terms per component (tf-idf over the code)")
+    s.add_argument("action", choices=["candidates"])
+    s.add_argument("--component", help="one component (default: the top terms of every component)")
+    s.add_argument("--top", type=int, help="terms per component (default: 30 for one, 15 for all)")
+    s.add_argument("--json", action="store_true")
     s = add("hotspots", cmd_hotspots, "components that change often, and pairs that change together (from git)")
     s.add_argument("--since", type=int, default=365, metavar="DAYS", help="days of history (default: 365)")
     s.add_argument("--json", action="store_true", help="the full analysis as JSON")

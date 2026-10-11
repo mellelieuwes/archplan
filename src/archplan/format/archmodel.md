@@ -255,6 +255,10 @@ where code names a concept it does not own.
   words, so `cartItems` and "cart items" both match the term `cart item`.
   `evidence` lists some sites as `file:line`.
 
+When an exporter writes no `vocabulary` section, archplan adds one after the
+export. It reads each component's `GLOSSARY.md`, ranks `suggested` terms by
+tf-idf over the component's files, and counts `usage`.
+
 An extractor reports usage; the reader decides which usage is a leak. A
 component's use of a concept is:
 

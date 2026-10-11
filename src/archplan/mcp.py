@@ -131,6 +131,26 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "id": {"type": "string"}, "label": {"type": "string", "description": "a few words"},
          "note": {"type": "string", "description": "one or two sentences: why"}}, "required": ["id", "label"]}},
+    {"name": "get_vocabulary_candidates",
+     "description": "Candidate glossary terms per component, from tf-idf over the code: words and two-word phrases "
+                    "a component uses much more than the others. Each has a score, df (how many components use it), "
+                    "the other components that use it most, sample identifiers, sites and model types, plus the "
+                    "component's existing concepts. Without component: the top 15 of every component, largest "
+                    "first. Use it to draft glossaries: keep the real domain concepts and skip technical noise.",
+     "inputSchema": {"type": "object", "properties": {
+         "component": {"type": "string"}, "top": {"type": "integer", "default": 30, "maximum": 100}}}},
+    {"name": "propose_glossary",
+     "description": "Propose glossaries for components as a pending suggestion (like edit_target); the human "
+                    "accepts it in the editor, and the plan then lists the GLOSSARY.md files to write. components: "
+                    "{component id: {concepts: [{name, terms, definition, kind}], uses: [concept names], avoid: "
+                    "[concept names]}}. A concept is owned by the component it is listed under; terms are the words "
+                    "code uses for it (the name's words by default); definition is one line grounded in the code; "
+                    "kind is domain, vendor or technical. uses names concepts of other components this one may "
+                    "name; avoid names those it must not. Send about 10 components at a time.",
+     "inputSchema": {"type": "object", "properties": {
+         "components": {"type": "object"}, "note": {"type": "string"},
+         "thread": {"type": "string", "description": "the thread this answers, such as the glossary request"}},
+         "required": ["components"]}},
     {"name": "update_profile",
      "description": "Replace the proposed architecture profile (the whole object, as get_architecture's profile "
                     "has it; use full=true there to get it). Only while the profile is proposed: once the human "
@@ -302,6 +322,28 @@ class Agent:
         from .findings import Findings, compact
         return compact(Findings(self.p).label(id, label, note))
 
+    def get_vocabulary_candidates(self, component=None, top=None):
+        from .vocab import Vocab
+        res = Vocab(self.p).candidates(component or None, min(int(top), 100) if top else None)
+        out = {}
+        for c, x in res["components"].items():
+            out[c] = {"files": x["files"],
+                      "concepts": [{k: v for k, v in k_.items() if v} for k_ in x["concepts"]],
+                      "terms": [{"term": t["term"], "score": t["score"], "df": t["df"],
+                                 "others": ", ".join(f"{o['component']} {o['count']:g}" for o in t["others"][:3]),
+                                 "samples": t["samples"][:4], **({"types": t["types"][:3]} if t["types"] else {}),
+                                 **({"owner_guess": t["owner_guess"]} if t["owner_guess"] != c else {})}
+                                for t in x["terms"]]}
+        return {"n_components": res["n_components"], "components": out}
+
+    def propose_glossary(self, components, note="", thread=None):
+        from .vocab import glossary_ops
+        target = self.p.target_or_model()
+        if not target:
+            raise ValueError("no model yet; call refresh_model")
+        ops = glossary_ops(target, components)
+        return self.edit_target(ops, note or f"Glossaries for {len(components)} component(s).", thread)
+
     def get_handover(self):
         h = self.handovers.current()
         if not h:
@@ -411,13 +453,15 @@ ACTIVITY = {
     "get_architecture": "Reading the architecture profile",
     "update_profile": "Updated the architecture profile",
     "get_findings": "Reading the findings",
+    "get_vocabulary_candidates": "Reading vocabulary candidates",
+    "propose_glossary": "Proposed glossaries",
     "label_finding": "Labelled finding {id}: {label}",
     "propose_batches": "Proposed how to split the refactors into batches",
     "set_refactor_state": "{progress}",
 }
 DONE = {"refresh_model": "Re-exported the model"}  # long calls: a second entry when they finish
 AFTER = ("reply", "open_thread", "edit_target", "propose_batches", "set_refactor_state", "update_profile",
-         "label_finding")  # recorded only when they succeed
+         "label_finding", "propose_glossary")  # recorded only when they succeed
 
 
 def record(p: Project, store: Store, tool: str, args: dict, done: bool = False) -> None:

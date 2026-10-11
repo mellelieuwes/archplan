@@ -16,6 +16,8 @@ editor) and an agent (over MCP):
   hotspots.json          cached analysis of the git history; not committed
   architecture.json      the architecture profile: units, roles, rules, layers
   baseline.json          findings the human accepted or dismissed, and Claude's labels on findings
+  vocabulary.json        terms to leave out of the glossary candidates
+  vocab-cache.json       per-file word counts for the candidates; not committed
   server.json            the running editor server (url, pid); not committed
 """
 
@@ -39,6 +41,7 @@ server.log
 .hook-seen.json
 activity.json
 hotspots.json
+vocab-cache.json
 *.tmp
 .*.lock
 """
@@ -233,6 +236,9 @@ class Project:
         m = read_json(self.model_path)
         if not m or m.get("format") != "archmodel/1":
             raise ProjectError(f"export did not produce an archmodel/1 file at {self.model_path}")
+        if not m.get("vocabulary"):
+            from .vocab import enrich  # the vocabulary step for exporters that have none
+            enrich(self)
         return counts(m)
 
 

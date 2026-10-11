@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 
 from .project import Project, ProjectError, etag, read_json
 
@@ -11,7 +12,7 @@ ANCHORS = ("Anchors name what a thread is about: type:<type id>, comp:<component
            "cedge:<from>-><to> (a component dependency), msg:<sequence id>:<message id>, "
            "concept:<concept id> (a glossary concept), leak:<component id>:<concept id> (a component using "
            "terms of a concept it should not), tedge:<kind>:<from type>-><to type> (a type relation), "
-           "task:<plan task key>, step:<plan task key>#<step index>, finding:<finding id>, and group:<anchor>|<anchor>|... "
+           "task:<plan task key>, step:<plan task key>#<step index>, finding:<finding id>, glossary (a request to draft glossaries), and group:<anchor>|<anchor>|... "
            "for one comment on several items, such as an import cycle.")
 
 
@@ -59,6 +60,12 @@ def get_item(p: Project, anchor: str):
         src, _, dst = pair.partition("->")
         return {"relation": rel, "from": {"anchor": "type:" + src, "item": get_item(p, "type:" + src)},
                 "to": {"anchor": "type:" + dst, "item": get_item(p, "type:" + dst)}}
+    if anchor == "glossary":
+        m = p.target_or_model() or {}
+        v = m.get("vocabulary") or {}
+        return {"glossaries": sorted(c for c, x in (v.get("components") or {}).items() if x.get("file")),
+                "concepts": len(v.get("concepts") or {}),
+                "next": "get_vocabulary_candidates, then propose_glossary"}
     if kind == "finding":
         from .findings import Findings
         try:
@@ -146,7 +153,99 @@ EDIT_OPS = {
     "forbid": "{op, from, to, note?}: forbid a dependency (adds a deny rule)",
     "permit": "{op, from, to, note?}: allow a dependency (removes deny rules, adds an allow rule when needed)",
     "remove_dependency": "{op, from, to}: drop an import edge the target should no longer have",
+    "add_concept": "{op, name, owner, terms?, definition?, kind?, id?}: a glossary concept owned by a component "
+                   "(id defaults to the name's slug; kind domain, vendor or technical)",
+    "set_concept": "{op, id, name?, owner?, terms?, definition?, kind?}: change a concept",
+    "remove_concept": "{op, id}: remove a concept and drop it from every uses and avoid list",
+    "set_glossary": "{op, component, uses?, avoid?}: the concept ids a component may name (uses) and must not "
+                    "name (avoid); each given list replaces the old one",
 }
+CONCEPT_KINDS = ("domain", "vendor", "technical")
+
+
+def concept_slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
+
+
+def vocab_edit(m: dict, op: dict) -> str:
+    """Apply one vocabulary op to m; return what it did."""
+    o, comps = op["op"], m.get("components") or {}
+    v = m.setdefault("vocabulary", {})
+    concepts = v.setdefault("concepts", {})
+    vcomps = v.setdefault("components", {})
+    v.setdefault("usage", [])
+
+    def strs(x, what):
+        if x is None:
+            return None
+        if not isinstance(x, list) or not all(isinstance(t, str) and t.strip() for t in x):
+            raise ValueError(f"{what} must be a list of non-empty strings")
+        return list(dict.fromkeys(t.strip() for t in x))
+
+    def check(k):
+        if k.get("owner") is not None and k["owner"] not in comps:
+            raise ValueError(f"no component {k['owner']!r} to own concept {k.get('name')!r}")
+        if k.get("kind") not in CONCEPT_KINDS:
+            raise ValueError(f"concept kind must be one of {', '.join(CONCEPT_KINDS)}")
+    if o == "add_concept":
+        name = str(op.get("name") or "").strip()
+        cid = op.get("id") or concept_slug(name)
+        if not name or not cid:
+            raise ValueError("add_concept needs a name")
+        if cid in concepts:
+            raise ValueError(f"concept {cid!r} exists (owned by {concepts[cid].get('owner')})")
+        k = {"name": name, "owner": op.get("owner"), "terms": strs(op.get("terms"), "terms") or [name.lower()],
+             "kind": op.get("kind") or "domain", "source": "glossary"}
+        if op.get("definition"):
+            k["definition"] = str(op["definition"]).strip()
+        check(k)
+        concepts[cid] = k
+        return f"added concept {name} ({cid}), owned by {k['owner']}"
+    if o == "set_concept":
+        cid = op["id"]
+        if cid not in concepts:
+            raise ValueError(f"no concept {cid!r}")
+        k = dict(concepts[cid])
+        for f in ("name", "owner", "definition", "kind"):
+            if op.get(f) is not None:
+                k[f] = str(op[f]).strip()
+        if op.get("terms") is not None:
+            k["terms"] = strs(op["terms"], "terms")
+        k.setdefault("kind", "domain")
+        check(k)
+        k["source"] = "glossary"
+        concepts[cid] = k
+        return f"changed concept {k.get('name', cid)}"
+    if o == "remove_concept":
+        cid = op["id"]
+        if cid not in concepts:
+            raise ValueError(f"no concept {cid!r}")
+        del concepts[cid]
+        for cv in vcomps.values():
+            for f in ("uses", "avoid"):
+                if cid in (cv.get(f) or []):
+                    cv[f] = [x for x in cv[f] if x != cid]
+        return f"removed concept {cid}"
+    if o == "set_glossary":
+        c = op["component"]
+        if c not in comps:
+            raise ValueError(f"no component {c!r}")
+        cv = vcomps.setdefault(c, {})
+        lists = {f: strs(op.get(f), f) for f in ("uses", "avoid")}
+        for f, ids in lists.items():
+            if ids is None:
+                continue
+            bad = [x for x in ids if x not in concepts]
+            if bad:
+                raise ValueError(f"{f} of {c} names unknown concepts: {', '.join(bad)}")
+            own = [x for x in ids if concepts[x].get("owner") == c]
+            if own:
+                raise ValueError(f"{c} owns {', '.join(own)}; it need not list them under {f}")
+            cv[f] = sorted(ids)
+        if set(cv.get("uses") or []) & set(cv.get("avoid") or []):
+            raise ValueError(f"{c} cannot both use and avoid a concept")
+        return f"set the glossary of {c}: uses {len(cv.get('uses') or [])}, avoid {len(cv.get('avoid') or [])}"
+    raise ValueError(f"unknown op {o!r}")
 
 
 def apply_edits(m: dict, ops: list) -> list:
@@ -220,6 +319,8 @@ def apply_edits(m: dict, ops: list) -> list:
             if len(m["dependencies"]) == before:
                 raise ValueError(f"no dependency {op['from']} -> {op['to']}")
             out.append(f"removed dependency {op['from']} -> {op['to']}")
+        elif o in ("add_concept", "set_concept", "remove_concept", "set_glossary"):
+            out.append(vocab_edit(m, op))
         else:
             raise ValueError(f"unknown op {o!r}; known: {', '.join(EDIT_OPS)}")
     return out

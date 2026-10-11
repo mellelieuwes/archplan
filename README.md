@@ -62,6 +62,7 @@ archplan up        # starts the editor in the background and prints its URL
 | Preview a suggestion and accept all, some or none of its changes | Proposes a refactor of the target with `edit_target`; learns the outcome from the monitor |
 | Review the architecture profile: units, file roles and the rules between them | Proposes a profile with `update_profile`; checks code against it with `get_architecture` |
 | Work through the findings: discuss one, dismiss it with a reason, or accept it as is | Lists them with `get_findings`; labels the ones a heuristic cannot settle with `label_finding` |
+| Ask Claude to draft the per-component glossaries | Reads ranked candidate terms with `get_vocabulary_candidates`; proposes concepts, definitions, `uses` and `avoid` with `propose_glossary` |
 | Look at hotspots and components that change together | Finds hidden coupling in the git history with `get_hotspots` and opens a thread on it |
 | Lock in a settled thread as a planned refactor, then go on with the open discussions | Leaves planned refactors alone; they do not wait on it |
 | Order the planned refactors and send them all as one handover: all in one go, or ask for a split first | Reads them with `get_handover`; for a split, proposes batches with `propose_batches` |
@@ -83,11 +84,14 @@ Everything is stored in `.archplan/` in the repository:
 | `handovers.json` | planned refactors you sent to the agent, its batches and progress |
 | `architecture.json` | the architecture profile: units, roles, rules and layers |
 | `baseline.json` | findings you accepted or dismissed, and Claude's labels on findings |
+| `vocabulary.json` | terms you told archplan to ignore as glossary candidates |
+| `vocab-cache.json` | the cached word counts per file |
 | `activity.json` | what the agent did last, shown in the editor |
 | `hotspots.json` | the cached git history analysis |
 
 Commit `.archplan/` to share the target, plan and threads with your team.
-`server.json`, `activity.json`, `hotspots.json` and the logs are ignored.
+`server.json`, `activity.json`, `hotspots.json`, `vocab-cache.json` and the
+logs are ignored.
 
 In a message, `@[Label](anchor)` mentions a model item, for example
 `@[Orders](comp:shop.orders)`. The editor and the agent both use this form.
@@ -108,6 +112,7 @@ In a message, `@[Label](anchor)` mentions a model item, for example
 | `archplan hotspots [--since DAYS] [--json]` | components that change most, and pairs that change together without a dependency |
 | `archplan profile [infer\|show] [--json]` | propose an architecture profile, or show how the code conforms to it |
 | `archplan check [--format github] [--all] [--update-baseline] [--export] [--json]` | new findings; exit 1 when there are any, 2 on errors |
+| `archplan glossary candidates [--component ID] [--top N] [--json]` | the words that characterise each component, ranked by tf-idf |
 | `archplan hook` | Claude Code hook: report threads that wait on the agent |
 | `archplan export-python` | the built-in Python exporter |
 | `archplan export-elixir`, `archplan trace-elixir` | the Elixir exporter and test tracer |
@@ -182,6 +187,33 @@ step for a Python project:
 `--export` runs the configured export command first. It runs only once a
 person approved that command with `archplan trust`, so in CI run the
 exporter yourself, as above.
+
+## Glossaries
+
+Each component can have a `GLOSSARY.md` next to its code. It names the
+concepts the component owns, the concepts of other components it may use,
+and those it must avoid. archplan reads these files after every export and
+adds a `vocabulary` section to the model, unless the exporter already wrote
+one. It also counts where a component names a concept it does not own. The
+editor shows these uses as leaks.
+
+```markdown
+---
+owns:
+  Cart item: [cart item, basket]
+uses: [product]
+avoid: [stripe]
+---
+**Cart item**: one product line in a cart.
+```
+
+archplan helps you write the first glossaries. It counts the words in the
+identifiers, strings and comments of each component's files. Words that are
+frequent in one component and rare in the others rank highest (tf-idf).
+Words in type names get a boost. Claude reads these candidates with their
+sample identifiers and the other components that use them. It then proposes
+concepts with one-line definitions as a suggestion you can review. Words you
+mark as noise go into `.archplan/vocabulary.json`.
 
 ## Exporters
 
