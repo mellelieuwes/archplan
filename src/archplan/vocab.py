@@ -34,7 +34,7 @@ from pathlib import Path
 from .architecture import source_files
 from .hotspots import Mapper
 from .project import Project, append_ignore, etag, read_json, write_json
-from .safeio import inside, read_file
+from .safeio import inside, model_base, read_file
 
 CACHE = "vocab-cache.json"
 FILE = "vocabulary.json"
@@ -290,15 +290,21 @@ class Vocab:
 
     # per-file counts
 
-    def file_counts(self, files: list) -> dict:
-        """{path: counts} for the files, from the cache when unchanged."""
+    def base(self, model: dict) -> Path:
+        """The folder the model's paths are relative to (see safeio.model_base)."""
+        return model_base(self.p.root, model)
+
+    def file_counts(self, files: list, base: Path | None = None) -> dict:
+        """{path: counts} for the files, from the cache when unchanged. The
+        paths are relative to base, the project root by default."""
+        base = base or self.p.root
         old = read_json(self.cache_path) or {}
         if old.get("version") != CACHE_VERSION:
             old = {}
         entries = old.get("files") or {}
         out, dirty = {}, False
         for f in files:
-            fp = inside(self.p.root, f)
+            fp = inside(base, f)
             if fp is None:
                 continue
             try:
@@ -345,7 +351,9 @@ class Vocab:
             return self._result[1]
         t0 = time.monotonic()
         by = self.files_by_component(model)
-        counts = self.file_counts(sorted(f for fs in by.values() for f in fs))
+        listed = sorted(f for fs in by.values() for f in fs)
+        base = self.base(model)
+        counts = self.file_counts(listed, base)
         comp_types = defaultdict(list)
         for tid, t in (model.get("types") or {}).items():
             if t.get("component"):
@@ -446,6 +454,9 @@ class Vocab:
         res = {"rank": out, "tf": tf, "df": df, "users": users, "best": best, "samples": samples, "sites": sites,
                "types": comp_types, "n": len(tf), "sizes": {c: len(fs) for c, fs in by.items()},
                "took_ms": round((time.monotonic() - t0) * 1000)}
+        if listed and not counts:
+            res["warning"] = (f"read none of the {len(listed)} source files the model lists, under {base}; "
+                              "the model's paths may not match this checkout")
         self._result = (key[1:], res)
         return res
 
@@ -504,7 +515,8 @@ class Vocab:
                       "files": res["sizes"].get(c, 0)}
             if ignored:
                 out[c]["ignored"] = sorted(here)
-        return {"components": out, "n_components": res["n"], "took_ms": round((time.monotonic() - t0) * 1000)}
+        return {"components": out, "n_components": res["n"], "took_ms": round((time.monotonic() - t0) * 1000),
+                **({"warning": res["warning"]} if res.get("warning") else {})}
 
 
 # ---------- GLOSSARY.md ----------
@@ -632,19 +644,20 @@ def vocabulary(p: Project, model: dict, v: Vocab | None = None) -> dict:
     internal = sorted(c for c, x in comps.items() if (x or {}).get("kind") != "external")
     concepts, vcomps, warnings = {}, {}, []
     gloss = {}
+    base = v.base(model)
     for c in internal:
         path = ((comps[c] or {}).get("path") or "").strip("/")
         if not path or ".." in path.split("/") or path.startswith("/"):
             continue
-        fp = p.root / path
-        fp = inside(p.root, ((fp if fp.is_dir() else fp.parent) / GLOSSARY).relative_to(p.root).as_posix())
+        fp = base / path
+        fp = inside(base, ((fp if fp.is_dir() else fp.parent) / GLOSSARY).relative_to(base).as_posix())
         if fp is None:
             continue
         try:
             text = read_file(fp, MAX_FILE, errors="strict")
         except (OSError, UnicodeDecodeError):
             continue
-        rel = fp.relative_to(p.root).as_posix()
+        rel = fp.relative_to(base).as_posix()
         try:
             g = parse_glossary(text)
         except ValueError as e:
@@ -703,6 +716,8 @@ def vocabulary(p: Project, model: dict, v: Vocab | None = None) -> dict:
         vcomps[c]["avoid"] = resolve(c, g["avoid"])
     # suggested terms
     res = v.analyse(model)
+    if res.get("warning"):
+        warnings.append(res["warning"])
     have = set(by_key)
     ig = v.ignored()
     for c, rows in res["rank"].items():
@@ -735,9 +750,10 @@ def usage(p: Project, model: dict, concepts: dict, by_key: dict, v: Vocab) -> li
         return []
     keys = {k: ids for k, ids in by_key.items() if k}
     rows = {}
+    base = v.base(model)
     for c, fs in v.files_by_component(model).items():
         for f in fs:
-            fp = inside(p.root, f)
+            fp = inside(base, f)
             if fp is None:
                 continue
             try:

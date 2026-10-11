@@ -39,6 +39,52 @@ def inside(root: Path, rel) -> Path | None:
     return fp
 
 
+BASE_SAMPLE = 200  # model paths tried per candidate folder
+
+
+def model_paths(model: dict) -> list:
+    """Paths a model names: its files, type files and component paths."""
+    out = list((model.get("files") or {}).keys())
+    out += [t["file"] for t in (model.get("types") or {}).values() if isinstance(t, dict) and t.get("file")]
+    out += [c["path"] for c in (model.get("components") or {}).values()
+            if isinstance(c, dict) and c.get("path") and c.get("kind") != "external"]
+    return [p for p in out if isinstance(p, str)]
+
+
+def model_base(root: Path, model: dict) -> Path:
+    """The folder the model's paths are relative to: the project root, or
+    one of its parents up to the repository root. Exporters write paths
+    relative to the repository root, so a project in a subfolder (mono/core)
+    has paths like core/lib/x.ex. Picks the folder where most of a sample of
+    the paths exist; the project root when none does better."""
+    root = Path(root)
+    cands, d = [root], root
+    while not (d / ".git").exists():
+        if d.parent == d or len(cands) > 12:
+            return root  # outside a repository the paths can only be the project's own
+        d = d.parent
+        cands.append(d)
+    if len(cands) == 1:
+        return root
+    paths = sorted(set(model_paths(model)))
+    step = max(1, len(paths) // BASE_SAMPLE)
+    sample = paths[::step][:BASE_SAMPLE]
+
+    def score(base):
+        n = 0
+        for p in sample:
+            fp = inside(base, p.strip("/"))
+            n += bool(fp is not None and os.path.lexists(fp))
+        return n
+    return max(cands, key=score)  # max keeps the first, the project root, on a tie
+
+
+def prefix_of(root: Path, base: Path) -> str:
+    """root relative to base, with a trailing slash; "" when they are the same."""
+    rel = Path(root).relative_to(base).as_posix()
+    return "" if rel == "." else rel + "/"
+
+
 def read_bytes(path, limit: int = MAX_READ, truncate: bool = False) -> bytes:
     """The bytes of a regular file that is not a symlink, at most limit of
     them. Raises Unsafe (an OSError) for anything else, and for a larger file

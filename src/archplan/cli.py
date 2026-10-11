@@ -511,6 +511,8 @@ def cmd_glossary(a):
                   + (f"  (also {others})" if others else ""))
         print()
     print(f"{res['n_components']} components, {res['took_ms']} ms", file=sys.stderr)
+    if res.get("warning"):
+        print(f"warning: {res['warning']}", file=sys.stderr)
 
 
 def cmd_exporters(a):

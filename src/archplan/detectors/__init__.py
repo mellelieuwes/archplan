@@ -171,12 +171,19 @@ class Context:
             return Vocab(self.p).analyse(self.model)
         return self._get("candidates", fn)
 
+    @property
+    def base(self):
+        """The folder the model's paths are relative to: the repository root
+        when the project sits in a subfolder of it."""
+        from ..safeio import model_base
+        return self._get("base", lambda: model_base(self.root, self.model))
+
     def read(self, path: str, limit: int = READ_MAX) -> str | None:
         """A repository file's text, or None when the path leaves the repository
         (paths come from the model, which is repository data) or cannot be read."""
         from ..safeio import read_text
         try:
-            return read_text(self.root, path, limit, truncate=True)
+            return read_text(self.base, path, limit, truncate=True)
         except OSError:
             return None
 
