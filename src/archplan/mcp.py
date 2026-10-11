@@ -374,7 +374,8 @@ class Agent:
                                  "samples": t["samples"][:4], **({"types": t["types"][:3]} if t["types"] else {}),
                                  **({"owner_guess": t["owner_guess"]} if t["owner_guess"] != c else {})}
                                 for t in x["terms"]]}
-        return {"n_components": res["n_components"], "components": out}
+        return {"n_components": res["n_components"], "components": out,
+                **({"warning": res["warning"]} if res.get("warning") else {})}
 
     def propose_glossary(self, components, note="", thread=None):
         from .vocab import glossary_ops

@@ -2368,3 +2368,46 @@ class HostileFilesTest(TempProject):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SubfolderVocabTest(TempProject):
+    """The project sits in core/ of its repository; model paths are relative
+    to the repository root."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / ".git").mkdir()
+        self.core = self.root / "core"
+        write(self.core, VOCAB_TREE)
+        self.p = project.init(self.core)
+        m = vocab_model()
+        pre = lambda s: "core/" + s
+        for c in m["components"].values():
+            c["path"], c["match"] = pre(c["path"]), [pre(x) for x in c["match"]]
+        for t in m["types"].values():
+            t["file"] = pre(t["file"])
+        m["files"] = {pre(f): v for f, v in m["files"].items()}
+        self.p.model_path.write_text(json.dumps(m))
+
+    def test_candidates(self):
+        from archplan.vocab import Vocab
+        res = Vocab(self.p).candidates("billing")
+        terms = [t["term"] for t in res["components"]["billing"]["terms"]]
+        self.assertEqual(terms[:2], ["invoice", "debtor"])
+        self.assertTrue(res["components"]["billing"]["terms"][0]["sites"][0].startswith("core/lib/billing/"))
+        self.assertNotIn("warning", res)
+
+    def test_glossary_in_subfolder(self):
+        from archplan.vocab import enrich
+        write(self.core, {"lib/billing/GLOSSARY.md": "---\nowns:\n  Invoice: []\n---\n**Invoice**: what a debtor owes.\n"})
+        self.assertTrue(enrich(self.p))
+        v = json.loads(self.p.model_path.read_text())["vocabulary"]
+        self.assertEqual(v["concepts"]["invoice"]["definition"], "what a debtor owes.")
+        self.assertEqual(v["components"]["billing"]["file"], "core/lib/billing/GLOSSARY.md")
+        self.assertIn("debtor", [x["term"] for x in v["components"]["billing"]["suggested"]])
+
+    def test_missing_files_warn(self):
+        from archplan.vocab import Vocab
+        shutil.rmtree(self.core / "lib")
+        res = Vocab(self.p).candidates()
+        self.assertIn("none of the 8 source files", res["warning"])

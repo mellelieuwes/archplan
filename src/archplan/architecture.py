@@ -33,6 +33,7 @@ from pathlib import Path
 
 from .hotspots import Mapper
 from .project import Project, ProjectError, etag, read_json, write_json
+from .safeio import model_base, prefix_of
 from .store import stamp
 
 FILE = "architecture.json"
@@ -97,17 +98,19 @@ def role_match(rel: str, pattern: str) -> bool:
 
 def source_files(model: dict, root: Path | None = None) -> list:
     """Repository-relative source files: from the model's files section and
-    type files, or else from the file system."""
+    type files, or else from the file system under root, with the paths
+    relative to the folder the model's paths are relative to."""
     fs = set((model.get("files") or {}).keys())
     fs |= {t["file"] for t in (model.get("types") or {}).values() if t.get("file")}
     if fs or root is None:
         return sorted(fs)
+    pre = prefix_of(root, model_base(root, model))
     out = []
     for d, dirs, names in os.walk(root):
         dirs[:] = [x for x in dirs if x not in SKIP_DIRS and not x.startswith(".")]
         for n in names:
             if os.path.splitext(n)[1] in SOURCE_EXT:
-                out.append(os.path.relpath(os.path.join(d, n), root).replace(os.sep, "/"))
+                out.append(pre + os.path.relpath(os.path.join(d, n), root).replace(os.sep, "/"))
     return sorted(out)
 
 
