@@ -2366,6 +2366,43 @@ class HostileFilesTest(TempProject):
         self.assertEqual(target.read_text(), "keep")
 
 
+@unittest.skipUnless(shutil.which("node"), "needs node")
+class GlossaryRoundTripTest(unittest.TestCase):
+    """A glossary written as planned must not show up as a change: reading
+    GLOSSARY.md back puts the name first in its own case (issue #1)."""
+
+    def concept_terms(self, *concepts):
+        src = (ROOT / "src/archplan/static/index.html").read_text()
+        body = src[src.index("// ---------- concept terms"):src.index("// ---------- diff")]
+        out = subprocess.run(["node", "-e", body + f"""
+            console.log(JSON.stringify({json.dumps(list(concepts))}.map(conceptTerms)));"""],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def test_terms_read_back_from_glossary_match_the_proposal(self):
+        proposed = {"name": "Consent agreement", "terms": ["consent", "agreement", "consent agreement"]}
+        read_back = {"name": "Consent agreement", "terms": ["Consent agreement", "consent", "agreement"]}
+        a, b = self.concept_terms(proposed, read_back)
+        self.assertEqual(a, b)
+
+    def test_spelling_and_case_fold_to_the_same_term(self):
+        a, b = self.concept_terms({"name": "Pay-in", "terms": ["payIn", "PAY_IN request"]},
+                                  {"name": "Pay-in", "terms": ["pay in", "pay in request"]})
+        self.assertEqual(a, b)
+
+    def test_a_real_term_change_still_shows(self):
+        a, b = self.concept_terms({"name": "Reward", "terms": ["reward"]},
+                                  {"name": "Reward", "terms": ["reward", "fee"]})
+        self.assertNotEqual(a, b)
+
+    def test_the_diff_compares_concept_terms(self):
+        src = (ROOT / "src/archplan/static/index.html").read_text()
+        diff = src[src.index("function diffModels"):src.index("function dslDiff")]
+        self.assertIn("conceptTerms(", diff)
+        self.assertNotIn("JSON.stringify(x.terms", diff)
+
+
 if __name__ == "__main__":
     unittest.main()
 
