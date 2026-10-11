@@ -247,6 +247,21 @@ def clean_ignore(d) -> dict:
 
 # ---------- the analysis ----------
 
+
+def inside(root: Path, rel: str) -> Path | None:
+    """root/rel when it stays inside root, symlinks included; None otherwise.
+
+    File lists come from the model, which is repo data, so a path such as
+    ../../etc/passwd or a symlink out of the repo must not be read."""
+    if not rel or rel.startswith("/") or ".." in rel.split("/"):
+        return None
+    fp = root / rel
+    try:
+        fp.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+    return fp
+
 class Vocab:
     def __init__(self, p: Project):
         self.p = p
@@ -288,7 +303,9 @@ class Vocab:
         entries = old.get("files") or {}
         out, dirty = {}, False
         for f in files:
-            fp = self.p.root / f
+            fp = inside(self.p.root, f)
+            if fp is None:
+                continue
             try:
                 st = fp.stat()
             except OSError:
@@ -631,7 +648,9 @@ def vocabulary(p: Project, model: dict, v: Vocab | None = None) -> dict:
         if not path or ".." in path.split("/") or path.startswith("/"):
             continue
         fp = p.root / path
-        fp = (fp if fp.is_dir() else fp.parent) / GLOSSARY
+        fp = inside(p.root, ((fp if fp.is_dir() else fp.parent) / GLOSSARY).relative_to(p.root).as_posix())
+        if fp is None:
+            continue
         try:
             text = fp.read_text()
         except OSError:
@@ -729,8 +748,11 @@ def usage(p: Project, model: dict, concepts: dict, by_key: dict, v: Vocab) -> li
     rows = {}
     for c, fs in v.files_by_component(model).items():
         for f in fs:
+            fp = inside(p.root, f)
+            if fp is None:
+                continue
             try:
-                text = (p.root / f).read_text(errors="replace")
+                text = fp.read_text(errors="replace")
             except OSError:
                 continue
             if len(text) > MAX_FILE:

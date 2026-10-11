@@ -958,6 +958,15 @@ class VocabTest(TempProject):
         self.p = project.init(self.root)
         self.p.model_path.write_text(json.dumps(vocab_model()))
 
+    def test_paths_stay_inside(self):
+        from archplan.vocab import inside
+        outside = Path(tempfile.mkdtemp())
+        (outside / "secret.py").write_text("secret_token = 1\n")
+        os.symlink(outside / "secret.py", self.root / "link.py")
+        for rel in ("../secret.py", "/etc/passwd", str(outside / "secret.py"), "link.py"):
+            self.assertIsNone(inside(self.root, rel), rel)
+        self.assertIsNotNone(inside(self.root, "a/b.py"))
+
     def test_words(self):
         from archplan.vocab import fold, fold_map, split, term_key, words
         self.assertEqual(split("parseHTTPRequest_v2"), ["parse", "http", "request", "v", "2"])
