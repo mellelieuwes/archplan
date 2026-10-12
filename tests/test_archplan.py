@@ -2403,9 +2403,6 @@ class GlossaryRoundTripTest(unittest.TestCase):
         self.assertNotIn("JSON.stringify(x.terms", diff)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class SubfolderVocabTest(TempProject):
     """The project sits in core/ of its repository; model paths are relative
@@ -2448,3 +2445,7 @@ class SubfolderVocabTest(TempProject):
         shutil.rmtree(self.core / "lib")
         res = Vocab(self.p).candidates()
         self.assertIn("none of the 8 source files", res["warning"])
+
+
+if __name__ == "__main__":
+    unittest.main()

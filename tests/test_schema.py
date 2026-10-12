@@ -837,9 +837,6 @@ class LiveReadOnlyTest(TempDir):
         con.close()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class SubfolderTest(TempDir):
     """A project in a subfolder of its git repository: the exporter writes
@@ -899,3 +896,7 @@ class SubfolderTest(TempDir):
         model = {**self.model, "schema": sch}
         fs = data_orphan_table.run(Ctx(model), data_orphan_table.PARAMS)
         self.assertEqual([f["evidence"]["table"] for f in fs], ["legacy"])
+
+
+if __name__ == "__main__":
+    unittest.main()
